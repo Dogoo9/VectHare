@@ -69,6 +69,11 @@ vi.mock('../core/constants.js', () => ({
     VECTOR_LIST_LIMIT: 10000,
 }));
 
+// Mock collection loader to keep backend unit tests isolated from UI/ST module imports
+vi.mock('../core/collection-loader.js', () => ({
+    registerCollection: vi.fn(),
+}));
+
 // Import backends after mocks are set up
 import { StandardBackend } from '../backends/standard.js';
 import { LanceDBBackend } from '../backends/lancedb.js';

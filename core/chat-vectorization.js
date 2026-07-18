@@ -55,6 +55,10 @@ import {
 // Hash cache for performance
 const hashCache = new LRUCache(HASH_CACHE_SIZE);
 
+// Track dynamically-created extension prompt tags so old multi-position
+// injections can be reliably cleared before each generation.
+const activePositionPromptTags = new Set();
+
 // Synchronization state
 let syncBlocked = false;
 
@@ -1460,6 +1464,31 @@ function resolveChunkInjectionPosition(chunk, settings) {
 }
 
 /**
+ * Clears any position-specific extension prompt tags created by multi-position
+ * injection. Falls back to the old first-ten tag scan so tags created before
+ * tracking was added are cleared too.
+ * @param {object} settings VectHare settings
+ */
+function clearPositionPromptTags(settings) {
+    const tagsToClear = new Set(activePositionPromptTags);
+
+    // Backward-compatible cleanup for tags created before this set was populated.
+    for (let i = 0; i < 10; i++) {
+        const legacyTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
+        if (extension_prompts[legacyTag]) {
+            tagsToClear.add(legacyTag);
+        }
+    }
+
+    for (const tag of tagsToClear) {
+        if (extension_prompts[tag]) {
+            setExtensionPrompt(tag, '', settings.position ?? 0, settings.depth ?? 0, false);
+        }
+        activePositionPromptTags.delete(tag);
+    }
+}
+
+/**
  * Stage 8: Format and inject chunks into prompt
  * Supports per-chunk/per-collection injection positions via cascade resolution.
  * Groups chunks by their resolved position+depth and creates separate injections.
@@ -1550,6 +1579,9 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
     // Multiple injection positions - create separate extension prompts for each
     console.log(`[VectHare Injection Control] Multiple position injection: ${positionGroups.size} different positions`);
 
+    // Clear tags from any previous multi-position injection before creating new ones.
+    clearPositionPromptTags(settings);
+
     // Clear the main tag first (will be unused when multi-position)
     setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
 
@@ -1570,6 +1602,7 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         // Use unique tag per position group
         const tag = `${EXTENSION_PROMPT_TAG}_pos${groupIndex}`;
 
+        activePositionPromptTags.add(tag);
         setExtensionPrompt(tag, groupText, group.position, group.depth, false);
 
         // Verify
@@ -1634,13 +1667,7 @@ export async function rearrangeChat(chat, settings, type) {
 
         // Clear extension prompts (main + any position-specific tags from previous run)
         setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
-        // Clear position-specific tags (max 10 should be more than enough)
-        for (let i = 0; i < 10; i++) {
-            const posTag = `${EXTENSION_PROMPT_TAG}_pos${i}`;
-            if (extension_prompts[posTag]) {
-                setExtensionPrompt(posTag, '', 0, 0, false);
-            }
-        }
+        clearPositionPromptTags(settings);
 
         if (!getCurrentChatId() || !Array.isArray(chat)) {
             console.debug('VectHare: No chat selected');
