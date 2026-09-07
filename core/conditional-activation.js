@@ -10,6 +10,8 @@
  * ============================================================================
  */
 
+import { matchesTextPattern } from './plain-text-matcher.js';
+
 // ============================================================================
 // EXPRESSIONS EXTENSION INTEGRATION
 // ============================================================================
@@ -202,6 +204,7 @@ function evaluatePatternCondition(rule, context) {
     const patterns = settings.patterns || settings.values || [];
     const matchMode = settings.matchMode || 'any';
     const caseSensitive = settings.caseSensitive === true;
+    const plainMatchMode = settings.plainMatchMode || 'word';
     const scanDepth = settings.scanDepth || 10;
     const searchIn = settings.searchIn || 'all'; // 'all', 'user', 'assistant'
 
@@ -231,27 +234,11 @@ function evaluatePatternCondition(rule, context) {
         return false;
     }
 
-    // Evaluate each pattern
-    const results = patterns.map(pattern => {
-        // Check if it's a regex pattern (wrapped in /.../)
-        if (pattern.startsWith('/') && pattern.lastIndexOf('/') > 0) {
-            try {
-                const lastSlash = pattern.lastIndexOf('/');
-                const regexPattern = pattern.slice(1, lastSlash);
-                const flags = pattern.slice(lastSlash + 1) || (caseSensitive ? '' : 'i');
-                const regex = new RegExp(regexPattern, flags);
-                return regex.test(searchText);
-            } catch (e) {
-                console.warn(`VectHare: Invalid pattern regex: ${pattern}`, e);
-                return false;
-            }
-        }
-
-        // Plain text matching
-        const textToSearch = caseSensitive ? searchText : searchText.toLowerCase();
-        const patternToMatch = caseSensitive ? pattern : pattern.toLowerCase();
-        return textToSearch.includes(patternToMatch);
-    });
+    // Evaluate each pattern with the same matcher used by collection triggers.
+    const results = patterns.map(pattern => matchesTextPattern(searchText, pattern, {
+        caseSensitive,
+        plainMatchMode,
+    }));
 
     // Apply match mode
     if (matchMode === 'all') {
@@ -730,25 +717,29 @@ function evaluateLorebookActiveCondition(rule, context) {
     const matchType = settings.matchType || 'any';
     const activeEntries = context.activeLorebookEntries || [];
 
+    const entryMatches = (entry, target) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const targetLower = String(target ?? '').toLowerCase();
+        const keys = Array.isArray(entry.key) ? entry.key : [entry.key];
+        const keyMatches = keys.some(key => {
+            const value = typeof key === 'object' ? (key.text ?? key.keyword ?? '') : key;
+            return String(value ?? '').toLowerCase().includes(targetLower);
+        });
+        const uidMatches = String(entry.uid ?? '').toLowerCase() === targetLower;
+        const lorebookMatches = [entry.lorebookName, entry.world]
+            .some(value => String(value ?? '').toLowerCase() === targetLower);
+        return keyMatches || uidMatches || lorebookMatches;
+    };
+
     if (matchType === 'all') {
         // All entries must be active
         return targetEntries.every(target => {
-            const targetLower = target.toLowerCase();
-            return activeEntries.some(entry => {
-                const entryKey = (entry.key || '').toLowerCase();
-                const entryUid = String(entry.uid || '').toLowerCase();
-                return entryKey.includes(targetLower) || entryUid === targetLower;
-            });
+            return activeEntries.some(entry => entryMatches(entry, target));
         });
     } else {
         // Any entry active (default)
         return targetEntries.some(target => {
-            const targetLower = target.toLowerCase();
-            return activeEntries.some(entry => {
-                const entryKey = (entry.key || '').toLowerCase();
-                const entryUid = String(entry.uid || '').toLowerCase();
-                return entryKey.includes(targetLower) || entryUid === targetLower;
-            });
+            return activeEntries.some(entry => entryMatches(entry, target));
         });
     }
 }

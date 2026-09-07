@@ -776,6 +776,7 @@ function enrichChunks(chunks, contentType, source, settings, preparedContent, ve
                 contentType,
                 sourceName: source.name || source.filename || 'Unknown',
                 entryName,
+                // Canonical lorebook entry identifier. Readers retain legacy uid/hash fallbacks.
                 entryUid,
                 disabled: entryDisabled,
                 keywordLevel,

@@ -50,6 +50,17 @@ async function loadLiveLorebook(lorebookName) {
     }
 }
 
+/**
+ * Resolve a lorebook entry UID from vector metadata.
+ * `entryUid` is the canonical field; `uid` and `hash` support older indexes.
+ *
+ * @param {object} metadata - Vector metadata for a lorebook entry
+ * @returns {*} The stored entry UID, or undefined when none is available
+ */
+export function resolveEntryUid(metadata = {}) {
+    return metadata.entryUid ?? metadata.uid ?? metadata.hash;
+}
+
 // ============================================================================
 // WORLD INFO ACTIVATION HOOKS
 // ============================================================================
@@ -64,6 +75,7 @@ async function loadLiveLorebook(lorebookName) {
  * @returns {Promise<object[]>} Array of WI entries to activate { uid, key, content, score }
  */
 export async function getSemanticWorldInfoEntries(recentMessages, activeEntries, settings) {
+    activeEntries = normalizeActiveLorebookEntries(activeEntries);
     if (!settings.enabled_world_info) {
         return [];
     }
@@ -92,7 +104,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
             generationType: 'normal',
             isGroupChat: context.groupId != null,
             currentCharacter: context.name2 || null,
-            activeLorebookEntries: activeEntries.map(e => e.key || e.uid),
+            activeLorebookEntries: activeEntries,
             currentChatId: getCurrentChatId(),
             currentCharacterId: context.characterId || null
         }
@@ -135,6 +147,9 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                             uid: liveEntry?.uid ?? storedUid,
                             key: liveEntry?.key ?? meta.keywords ?? meta.entryName ?? [],
                             content: liveEntry?.content ?? meta.text ?? '',
+                            uid: resolveEntryUid(meta),
+                            key: meta.keywords || meta.entryName || [],
+                            content: meta.text || '',
                             score: score,
                             lorebookName: collection.name,
                             collectionId: rawCollectionId,
@@ -172,6 +187,37 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
     console.log(`VectHare: Found ${limitedEntries.length} semantic WI entries to activate` +
         (deduplicatedEntries.length > limitedEntries.length ? ` (capped from ${deduplicatedEntries.length} by Max Entries)` : ''));
     return limitedEntries;
+}
+
+/**
+ * Convert the entries exposed by SillyTavern's World Info scan into the stable
+ * representation used by VectHare conditionals and semantic de-duplication.
+ * ST currently supplies entry objects, usually from a Map keyed by
+ * `<world>.<uid>`, but accepting arrays keeps this adapter compatible with the
+ * WORLD_INFO_ACTIVATED event and older hosts.
+ *
+ * @param {Map|Set|object[]|object|null|undefined} activeEntries
+ * @returns {Array<{uid: string|number, key: string|string[], content: string, lorebookName: string, world: string}>}
+ */
+export function normalizeActiveLorebookEntries(activeEntries) {
+    let entries;
+    if (activeEntries instanceof Map) entries = [...activeEntries.values()];
+    else if (activeEntries instanceof Set) entries = [...activeEntries.values()];
+    else if (Array.isArray(activeEntries)) entries = activeEntries;
+    else if (activeEntries && typeof activeEntries === 'object') entries = Object.values(activeEntries);
+    else entries = [];
+
+    return entries.filter(entry => entry && typeof entry === 'object').map(entry => {
+        const lorebookName = String(entry.lorebookName ?? entry.world ?? entry.book ?? entry.source ?? '');
+        return {
+            ...entry,
+            uid: entry.uid ?? entry.id ?? '',
+            key: entry.key ?? entry.keys ?? entry.keywords ?? [],
+            content: String(entry.content ?? entry.text ?? ''),
+            lorebookName,
+            world: String(entry.world ?? lorebookName),
+        };
+    });
 }
 
 /**
@@ -236,12 +282,16 @@ async function getEnabledLorebookCollections(settings, searchContext) {
  * @returns {object[]} Deduplicated entries
  */
 function deduplicateWithActiveEntries(semanticEntries, activeEntries) {
-    const activeUids = new Set(activeEntries.map(e => e.uid));
+    const activeUids = new Set(activeEntries
+        .map(entry => resolveEntryUid(entry))
+        .filter(uid => uid !== undefined && uid !== null)
+        .map(String));
     const activeContents = new Set(activeEntries.map(e => e.content?.trim().toLowerCase()));
 
     return semanticEntries.filter(entry => {
         // Skip if UID already active
-        if (activeUids.has(entry.uid)) {
+        const entryUid = resolveEntryUid(entry);
+        if (entryUid !== undefined && entryUid !== null && activeUids.has(String(entryUid))) {
             return false;
         }
 
@@ -372,9 +422,17 @@ export function initializeWorldInfoIntegration() {
  * @param {object[]} chat Current chat messages
  * @param {object} settings VectHare settings
  */
-export async function applySemanticEntriesToPrompt(chat, settings) {
+export async function applySemanticEntriesToPrompt(chat, settings, activeEntries = []) {
     try {
-        if (!settings || !settings.enabled_world_info) return;
+        // This event runs once per generation. Clear the prior generation's
+        // value first so disabled activation and zero-hit searches cannot leak
+        // stale lore into the next prompt.
+        const position = settings?.position || 0;
+        const depth = settings?.depth || 2;
+        setExtensionPrompt(EXTENSION_PROMPT_TAG, '', position, depth, false);
+        if (!settings || !settings.enabled_world_info) return [];
+
+        const normalizedActiveEntries = normalizeActiveLorebookEntries(activeEntries);
 
         const recentMessages = chat
             .filter(m => !m.is_system)
@@ -382,9 +440,9 @@ export async function applySemanticEntriesToPrompt(chat, settings) {
             .slice(0, settings.world_info_query_depth || settings.query || 3)
             .map(m => (m.mes || '').toString());
 
-        const entries = await getSemanticWorldInfoEntries(recentMessages, [], settings);
+        const entries = await getSemanticWorldInfoEntries(recentMessages, normalizedActiveEntries, settings);
         if (!entries || entries.length === 0) {
-            return;
+            return [];
         }
 
         // Build simple injection text from entries (preserve order by score)
@@ -396,7 +454,9 @@ export async function applySemanticEntriesToPrompt(chat, settings) {
         // Inject into ST extension prompt tag so generation will include it
         setExtensionPrompt(EXTENSION_PROMPT_TAG, fullText, settings.position || 0, settings.depth || 2, false);
         console.log(`VectHare: Injected ${entries.length} semantic WI entries into prompt`);
+        return entries;
     } catch (err) {
         console.warn('VectHare: Failed to apply semantic WI to prompt', err.message || err);
+        return [];
     }
 }
