@@ -372,3 +372,25 @@ If VectHare helps your roleplay:
 ---
 
 *"It's like having a memory that actually works."* 🐰✨
+
+### Plain-text activation matching
+
+Collection triggers and plain pattern-condition values use Unicode-aware word
+boundaries by default. Thus `art` matches `art!` but not `party`. Matching is
+case-insensitive unless `caseSensitive` is enabled. Multi-word phrases normalize
+the whitespace in the configured phrase: for example, `red fox` also matches
+`red\nfox` or multiple spaces.
+
+Plain values are escaped before a regular expression is built, so punctuation is
+literal rather than regex syntax. Apostrophes and hyphens are punctuation (word
+boundaries): a whole phrase such as `don't` or `mother-in-law` matches literally,
+while the pieces on either side are separate boundary-delimited words. Letters,
+combining marks, numbers, and underscores are Unicode word characters, so
+non-Latin words receive the same boundary handling. NFC normalization makes
+canonically equivalent accented text match.
+
+Set `plainMatchMode: 'substring'` on a pattern condition, or
+`triggerPlainMatchMode: 'substring'` in collection metadata (also available as
+`plainMatchMode` in `setCollectionTriggers`), for compatibility with the old
+contains behavior. Explicit `/pattern/flags` values continue to be treated as
+regular expressions and are not escaped or boundary-wrapped.

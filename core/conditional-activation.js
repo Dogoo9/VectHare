@@ -10,6 +10,8 @@
  * ============================================================================
  */
 
+import { matchesTextPattern } from './plain-text-matcher.js';
+
 // ============================================================================
 // EXPRESSIONS EXTENSION INTEGRATION
 // ============================================================================
@@ -202,6 +204,7 @@ function evaluatePatternCondition(rule, context) {
     const patterns = settings.patterns || settings.values || [];
     const matchMode = settings.matchMode || 'any';
     const caseSensitive = settings.caseSensitive === true;
+    const plainMatchMode = settings.plainMatchMode || 'word';
     const scanDepth = settings.scanDepth || 10;
     const searchIn = settings.searchIn || 'all'; // 'all', 'user', 'assistant'
 
@@ -231,27 +234,11 @@ function evaluatePatternCondition(rule, context) {
         return false;
     }
 
-    // Evaluate each pattern
-    const results = patterns.map(pattern => {
-        // Check if it's a regex pattern (wrapped in /.../)
-        if (pattern.startsWith('/') && pattern.lastIndexOf('/') > 0) {
-            try {
-                const lastSlash = pattern.lastIndexOf('/');
-                const regexPattern = pattern.slice(1, lastSlash);
-                const flags = pattern.slice(lastSlash + 1) || (caseSensitive ? '' : 'i');
-                const regex = new RegExp(regexPattern, flags);
-                return regex.test(searchText);
-            } catch (e) {
-                console.warn(`VectHare: Invalid pattern regex: ${pattern}`, e);
-                return false;
-            }
-        }
-
-        // Plain text matching
-        const textToSearch = caseSensitive ? searchText : searchText.toLowerCase();
-        const patternToMatch = caseSensitive ? pattern : pattern.toLowerCase();
-        return textToSearch.includes(patternToMatch);
-    });
+    // Evaluate each pattern with the same matcher used by collection triggers.
+    const results = patterns.map(pattern => matchesTextPattern(searchText, pattern, {
+        caseSensitive,
+        plainMatchMode,
+    }));
 
     // Apply match mode
     if (matchMode === 'all') {
