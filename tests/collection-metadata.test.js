@@ -112,3 +112,27 @@ describe('collection metadata activation policies', () => {
         expect(active).toEqual(['lorebook_exclusive', 'document_other']);
     });
 });
+
+describe('collection trigger plain-text matching', () => {
+    beforeEach(() => {
+        extension_settings.vecthare = { collections: {}, chatCollectionPolicies: {} };
+    });
+
+    it('uses word matching by default', async () => {
+        setCollectionMeta('word-trigger', { enabled: true, triggers: ['art'] });
+        await expect(shouldCollectionActivate('word-trigger', { recentMessages: ['party'] })).resolves.toBe(false);
+        await expect(shouldCollectionActivate('word-trigger', { recentMessages: ['Art!'] })).resolves.toBe(true);
+    });
+
+    it('supports legacy substring mode and explicit regex triggers', async () => {
+        setCollectionMeta('substring-trigger', {
+            enabled: true,
+            triggers: ['art'],
+            triggerPlainMatchMode: 'substring',
+        });
+        setCollectionMeta('regex-trigger', { enabled: true, triggers: ['/PART(Y|IES)/i'] });
+
+        await expect(shouldCollectionActivate('substring-trigger', { recentMessages: ['party'] })).resolves.toBe(true);
+        await expect(shouldCollectionActivate('regex-trigger', { recentMessages: ['parties'] })).resolves.toBe(true);
+    });
+});

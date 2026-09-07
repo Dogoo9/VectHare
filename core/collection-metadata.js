@@ -12,6 +12,7 @@
 import { extension_settings } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { parseRegistryKey } from './collection-ids.js';
+import { matchesTextPattern } from './plain-text-matcher.js';
 
 // ============================================================================
 // COLLECTION METADATA CRUD
@@ -51,6 +52,7 @@ const defaultCollectionMeta = {
     triggers: [],                  // Array of trigger keywords (case-insensitive)
     triggerMatchMode: 'any',       // 'any' = OR logic, 'all' = AND logic
     triggerCaseSensitive: false,   // Case sensitivity for trigger matching
+    triggerPlainMatchMode: 'word', // 'word' (default) or legacy 'substring'
     triggerScanDepth: 5,           // How many recent messages to scan for triggers
 
     // =========================================================================
@@ -962,6 +964,7 @@ function checkTriggers(triggers, context, options = {}) {
         matchMode = 'any',
         caseSensitive = false,
         scanDepth = 5,
+        plainMatchMode = 'word',
     } = options;
 
     // Get recent message text to scan
@@ -973,29 +976,11 @@ function checkTriggers(triggers, context, options = {}) {
         return false;
     }
 
-    const textToSearch = caseSensitive ? searchText : searchText.toLowerCase();
-
-    // Check each trigger
-    const results = triggers.map(trigger => {
-        const triggerText = caseSensitive ? trigger : trigger.toLowerCase();
-
-        // Support regex triggers (wrapped in /.../)
-        if (trigger.startsWith('/') && trigger.lastIndexOf('/') > 0) {
-            try {
-                const lastSlash = trigger.lastIndexOf('/');
-                const pattern = trigger.slice(1, lastSlash);
-                const flags = trigger.slice(lastSlash + 1) || (caseSensitive ? '' : 'i');
-                const regex = new RegExp(pattern, flags);
-                return regex.test(searchText);
-            } catch (e) {
-                console.warn(`VectHare: Invalid trigger regex: ${trigger}`);
-                return false;
-            }
-        }
-
-        // Plain text matching
-        return textToSearch.includes(triggerText);
-    });
+    // Check each trigger with the shared plain-text/regex matcher.
+    const results = triggers.map(trigger => matchesTextPattern(searchText, trigger, {
+        caseSensitive,
+        plainMatchMode,
+    }));
 
     // Apply match mode
     if (matchMode === 'all') {
@@ -1159,6 +1144,7 @@ export async function shouldCollectionActivate(collectionId, context) {
             matchMode: meta.triggerMatchMode || 'any',
             caseSensitive: meta.triggerCaseSensitive || false,
             scanDepth: meta.triggerScanDepth || 5,
+            plainMatchMode: meta.triggerPlainMatchMode || 'word',
         });
 
         if (triggersMatch) {
@@ -1235,20 +1221,21 @@ export async function filterActiveCollections(collectionIds, context) {
  * Sets activation triggers for a collection
  * @param {string} collectionId Collection identifier
  * @param {string[]} triggers Array of trigger keywords
- * @param {object} options Optional: matchMode, caseSensitive, scanDepth
+ * @param {object} options Optional: matchMode, caseSensitive, scanDepth, plainMatchMode
  */
 export function setCollectionTriggers(collectionId, triggers, options = {}) {
     const update = { triggers };
     if (options.matchMode !== undefined) update.triggerMatchMode = options.matchMode;
     if (options.caseSensitive !== undefined) update.triggerCaseSensitive = options.caseSensitive;
     if (options.scanDepth !== undefined) update.triggerScanDepth = options.scanDepth;
+    if (options.plainMatchMode !== undefined) update.triggerPlainMatchMode = options.plainMatchMode;
     setCollectionMeta(collectionId, update);
 }
 
 /**
  * Gets activation triggers for a collection
  * @param {string} collectionId Collection identifier
- * @returns {object} { triggers, matchMode, caseSensitive, scanDepth }
+ * @returns {object} { triggers, matchMode, caseSensitive, scanDepth, plainMatchMode }
  */
 export function getCollectionTriggers(collectionId) {
     const meta = getCollectionMeta(collectionId);
@@ -1257,6 +1244,7 @@ export function getCollectionTriggers(collectionId) {
         matchMode: meta.triggerMatchMode || 'any',
         caseSensitive: meta.triggerCaseSensitive || false,
         scanDepth: meta.triggerScanDepth || 5,
+        plainMatchMode: meta.triggerPlainMatchMode || 'word',
     };
 }
 

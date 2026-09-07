@@ -196,6 +196,7 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
                 triggers: collectionMeta.triggers || [],
                 triggerMatchMode: collectionMeta.triggerMatchMode || 'any',
                 triggerCaseSensitive: collectionMeta.triggerCaseSensitive || false,
+                triggerPlainMatchMode: collectionMeta.triggerPlainMatchMode || 'word',
                 triggerScanDepth: collectionMeta.triggerScanDepth || 5,
                 conditions: collectionMeta.conditions || { enabled: false, logic: 'AND', rules: [] },
 
@@ -313,6 +314,7 @@ export async function exportMultipleCollections(collectionIds, settings) {
                     triggers: collectionMeta.triggers || [],
                     triggerMatchMode: collectionMeta.triggerMatchMode || 'any',
                     triggerCaseSensitive: collectionMeta.triggerCaseSensitive || false,
+                    triggerPlainMatchMode: collectionMeta.triggerPlainMatchMode || 'word',
                     triggerScanDepth: collectionMeta.triggerScanDepth || 5,
                     conditions: collectionMeta.conditions || { enabled: false, logic: 'AND', rules: [] },
                     temporalDecay: collectionMeta.temporalDecay || {
@@ -613,6 +615,7 @@ export async function importCollection(exportData, settings, options = {}) {
                 triggers: exportData.settings.triggers,
                 triggerMatchMode: exportData.settings.triggerMatchMode,
                 triggerCaseSensitive: exportData.settings.triggerCaseSensitive,
+                triggerPlainMatchMode: exportData.settings.triggerPlainMatchMode || 'word',
                 triggerScanDepth: exportData.settings.triggerScanDepth,
                 conditions: exportData.settings.conditions,
                 temporalDecay: exportData.settings.temporalDecay,
@@ -781,6 +784,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
             triggers: exportData.settings.triggers,
             triggerMatchMode: exportData.settings.triggerMatchMode,
             triggerCaseSensitive: exportData.settings.triggerCaseSensitive,
+            triggerPlainMatchMode: exportData.settings.triggerPlainMatchMode || 'word',
             triggerScanDepth: exportData.settings.triggerScanDepth,
             conditions: exportData.settings.conditions,
             temporalDecay: exportData.settings.temporalDecay,
