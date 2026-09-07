@@ -360,7 +360,7 @@ async function prepareContent(contentType, rawContent, settings) {
  * For per_entry: each entry.content becomes one chunk
  * For other strategies: concatenate all entries, then chunk by that strategy
  */
-function prepareLorebookContent(rawContent, settings) {
+export function prepareLorebookContent(rawContent, settings) {
     // Handle both array (from Object.values) and object (raw entries)
     let entries = rawContent.entries || rawContent.content;
 
@@ -373,9 +373,10 @@ function prepareLorebookContent(rawContent, settings) {
         return { text: '', type: 'empty' };
     }
 
-    // Filter to entries that have content, and apply text cleaning
+    // includeDisabled controls storage only. Runtime World Info activation
+    // always reconciles these chunks with the live entry's disabled state.
     const validEntries = entries
-        .filter(e => e && e.content)
+        .filter(e => e && e.content && (settings.includeDisabled === true || e.disable !== true))
         .map(e => ({ ...e, content: cleanText(e.content) }));
 
     if (settings.strategy === 'per_entry') {
@@ -699,12 +700,14 @@ function enrichChunks(chunks, contentType, source, settings, preparedContent, ve
         let keywords = []; // Will hold {text, weight} objects
         let entryName = null;
         let entryUid = null;
+        let entryDisabled = null;
 
         // For lorebooks with per_entry, get keywords from the entry
         if (contentType === 'lorebook' && preparedContent.entries?.[index]) {
             const entry = preparedContent.entries[index];
             entryName = entry.comment || entry.name || entry.key?.[0] || 'Entry';
             entryUid = entry.uid;
+            entryDisabled = entry.disable === true;
 
             // Get explicit trigger keys (these are manually set, so use base weight)
             const triggerKeys = extractLorebookKeywords(entry, vecthareSettings);
@@ -774,6 +777,7 @@ function enrichChunks(chunks, contentType, source, settings, preparedContent, ve
                 sourceName: source.name || source.filename || 'Unknown',
                 entryName,
                 entryUid,
+                disabled: entryDisabled,
                 keywordLevel,
                 keywordBaseWeight,
                 ...(chunk.metadata || {}),

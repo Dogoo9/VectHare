@@ -807,7 +807,7 @@ function updateOptionsSection(type) {
                 <label class="vecthare-cv-toggle-label">
                     <span>Include Disabled Entries</span>
                     <label class="vecthare-toggle-switch">
-                        <input type="checkbox" id="vecthare_cv_include_disabled">
+                        <input type="checkbox" id="vecthare_cv_include_disabled" ${currentSettings.includeDisabled === true ? 'checked' : ''}>
                         <span class="vecthare-toggle-slider"></span>
                     </label>
                 </label>
@@ -1162,6 +1162,12 @@ function bindEvents() {
         const value = parseFloat($(this).val());
         currentSettings.keywordBaseWeight = isNaN(value) ? 1.5 : Math.min(3.0, Math.max(0.01, value));
         $(this).val(currentSettings.keywordBaseWeight);
+    });
+
+    // Disabled lorebook entries may be stored for diagnostics/search, but are
+    // still rejected at runtime when their live World Info entry is disabled.
+    $(document).on('change', '#vecthare_cv_include_disabled', function() {
+        currentSettings.includeDisabled = $(this).prop('checked');
     });
 
     // Temporal weighting enable/disable
