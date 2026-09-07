@@ -23,6 +23,32 @@ import { buildLorebookCollectionId } from './collection-ids.js';
 import { setExtensionPrompt, getCurrentChatId } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { buildSearchContext } from './conditional-activation.js';
+import { loadWorldInfo } from '../../../../world-info.js';
+
+function normalizeWorldInfoUid(uid) {
+    return uid == null ? '' : String(uid).trim();
+}
+
+async function loadLiveLorebook(lorebookName) {
+    try {
+        const worldInfo = await loadWorldInfo(lorebookName);
+        const entries = worldInfo?.entries;
+        if (!entries || typeof entries !== 'object') {
+            return { loaded: true, entriesByUid: new Map() };
+        }
+
+        const entriesByUid = new Map();
+        for (const [entryKey, entry] of Object.entries(entries)) {
+            if (!entry) continue;
+            const uid = normalizeWorldInfoUid(entry.uid ?? entryKey);
+            if (uid) entriesByUid.set(uid, entry);
+        }
+        return { loaded: true, entriesByUid };
+    } catch (error) {
+        console.warn(`VectHare: Could not load live lorebook "${lorebookName}"; using vector metadata:`, error);
+        return { loaded: false, entriesByUid: new Map() };
+    }
+}
 
 /**
  * Resolve a lorebook entry UID from vector metadata.
@@ -94,6 +120,10 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
             const parsed = parseRegistryKey(collection.id || collection.registryKey || '');
             const rawCollectionId = parsed.collectionId || collection.id;
 
+            // A vector hit identifies a candidate only. The live lorebook is
+            // authoritative for runtime eligibility, content, and trigger keys.
+            const liveLorebook = await loadLiveLorebook(collection.name);
+
             // Query this lorebook collection (use raw collection ID)
             const results = await queryCollection(rawCollectionId, query, topK, settings);
 
@@ -103,8 +133,20 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                     const score = meta.score || 0;
 
                     if (score >= threshold) {
+                        const storedUid = meta.uid ?? meta.entryUid ?? meta.hash;
+                        const liveEntry = liveLorebook.entriesByUid.get(normalizeWorldInfoUid(storedUid));
+                        const liveContent = typeof liveEntry?.content === 'string' ? liveEntry.content.trim() : liveEntry?.content;
+                        const storedDisabled = meta.disabled === true || meta.metadata?.disabled === true;
+                        if ((liveLorebook.loaded && (!liveEntry || liveEntry.disable === true || !liveContent)) ||
+                            (!liveLorebook.loaded && storedDisabled)) {
+                            continue;
+                        }
+
                         // Extract WI entry data from metadata
                         const entry = {
+                            uid: liveEntry?.uid ?? storedUid,
+                            key: liveEntry?.key ?? meta.keywords ?? meta.entryName ?? [],
+                            content: liveEntry?.content ?? meta.text ?? '',
                             uid: resolveEntryUid(meta),
                             key: meta.keywords || meta.entryName || [],
                             content: meta.text || '',

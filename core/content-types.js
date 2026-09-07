@@ -228,6 +228,7 @@ export const CONTENT_TYPES = {
         defaults: {
             chunkSize: 600,
             autoKeywords: true,
+            includeDisabled: false,
             scope: 'global',
         },
 

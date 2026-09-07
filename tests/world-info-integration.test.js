@@ -55,12 +55,17 @@ vi.mock('../core/conditional-activation.js', () => ({
     })),
 }));
 
+vi.mock('../core/../../../../world-info.js', () => ({
+    loadWorldInfo: vi.fn(),
+}));
+
 import { getContext } from '../core/../../../../extensions.js';
 import { setExtensionPrompt, getCurrentChatId } from '../core/../../../../../script.js';
 import { queryCollection } from '../core/core-vector-api.js';
 import { getCollectionMeta, isCollectionEnabled, shouldCollectionActivate, applyChatCollectionPolicy } from '../core/collection-metadata.js';
 import { parseRegistryKey, buildLorebookCollectionId } from '../core/collection-ids.js';
 import { buildSearchContext } from '../core/conditional-activation.js';
+import { loadWorldInfo } from '../core/../../../../world-info.js';
 
 import {
     getSemanticWorldInfoEntries,
@@ -85,6 +90,50 @@ describe('getSemanticWorldInfoEntries', () => {
         shouldCollectionActivate.mockResolvedValue(true);
         getCollectionMeta.mockReturnValue({ sourceName: 'Test Lorebook' });
         applyChatCollectionPolicy.mockImplementation((ids) => ids);
+        loadWorldInfo.mockRejectedValue(new Error('World Info unavailable in default test setup'));
+    });
+
+    const liveSettings = {
+        enabled_world_info: true,
+        world_info_threshold: 0.3,
+        world_info_top_k: 3,
+        vecthare_collection_registry: ['lorebook_global_test'],
+    };
+
+    function mockStoredEntry() {
+        queryCollection.mockResolvedValue({
+            metadata: [{ uid: '42', text: 'Stored content', keywords: ['stored'], score: 0.8 }],
+        });
+    }
+
+    it('drops an entry disabled after vectorization', async () => {
+        mockStoredEntry();
+        loadWorldInfo.mockResolvedValue({ entries: { 42: { uid: 42, disable: true, content: 'Live content', key: ['live'] } } });
+
+        await expect(getSemanticWorldInfoEntries(['query'], [], liveSettings)).resolves.toEqual([]);
+    });
+
+    it('allows an entry re-enabled after vectorization', async () => {
+        mockStoredEntry();
+        loadWorldInfo.mockResolvedValue({ entries: { 42: { uid: 42, disable: false, content: 'Live content', key: ['live'] } } });
+
+        const [entry] = await getSemanticWorldInfoEntries(['query'], [], liveSettings);
+        expect(entry).toMatchObject({ uid: 42, content: 'Live content', key: ['live'] });
+    });
+
+    it('uses content and trigger keys edited after vectorization', async () => {
+        mockStoredEntry();
+        loadWorldInfo.mockResolvedValue({ entries: { 42: { uid: '42', content: 'Edited live content', key: ['edited', 'current'] } } });
+
+        const [entry] = await getSemanticWorldInfoEntries(['query'], [], liveSettings);
+        expect(entry).toMatchObject({ content: 'Edited live content', key: ['edited', 'current'] });
+    });
+
+    it('drops an entry deleted after vectorization', async () => {
+        mockStoredEntry();
+        loadWorldInfo.mockResolvedValue({ entries: {} });
+
+        await expect(getSemanticWorldInfoEntries(['query'], [], liveSettings)).resolves.toEqual([]);
     });
 
     it('should return empty array when world info is disabled', async () => {
