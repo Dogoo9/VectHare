@@ -219,6 +219,51 @@ describe('getSemanticWorldInfoEntries', () => {
         expect(result[0].uid).toBe('entry2');
     });
 
+    it('should deduplicate canonical numeric entryUid metadata against a string active UID', async () => {
+        const settings = {
+            enabled_world_info: true,
+            world_info_threshold: 0.3,
+            world_info_top_k: 3,
+            vecthare_collection_registry: ['lorebook_global_test'],
+        };
+
+        queryCollection.mockResolvedValue({
+            hashes: [1, 2],
+            metadata: [
+                { entryUid: 42, uid: 'legacy-wrong-id', text: 'Semantic content', score: 0.8 },
+                { entryUid: 43, text: 'Unique content', score: 0.7 },
+            ],
+        });
+
+        const activeEntries = [{ uid: '42', content: 'Different active content' }];
+        const result = await getSemanticWorldInfoEntries(['query'], activeEntries, settings);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].uid).toBe(43);
+    });
+
+    it.each([
+        ['uid', { uid: 'legacy-uid' }, 'legacy-uid'],
+        ['hash', { hash: 9876 }, 9876],
+    ])('should resolve legacy metadata containing only %s', async (_field, legacyMetadata, expectedUid) => {
+        const settings = {
+            enabled_world_info: true,
+            world_info_threshold: 0.3,
+            world_info_top_k: 3,
+            vecthare_collection_registry: ['lorebook_global_test'],
+        };
+
+        queryCollection.mockResolvedValue({
+            hashes: [1],
+            metadata: [{ ...legacyMetadata, text: 'Legacy content', score: 0.8 }],
+        });
+
+        const result = await getSemanticWorldInfoEntries(['query'], [], settings);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].uid).toBe(expectedUid);
+    });
+
     it('should deduplicate with active entries by content', async () => {
         const settings = {
             enabled_world_info: true,
