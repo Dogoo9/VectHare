@@ -18,6 +18,7 @@ import {
 import {
     ModuleWorkerWrapper,
     extension_settings,
+    getContext,
 } from '../../../extensions.js';
 import { debounce } from '../../../utils.js';
 import { debounce_timeout } from '../../../constants.js';
@@ -36,7 +37,7 @@ import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmSta
 import { initializeVisualizer } from './ui/chunk-visualizer.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeSceneMarkers, updateAllMarkerStates, setSceneSettings } from './ui/scene-markers.js';
-import { initializeWorldInfoIntegration } from './core/world-info-integration.js';
+import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
 
 // VectHare modules - Cotton-Tales Integration
 import './core/emotion-classifier.js'; // Exposes window.VectHareEmotionClassifier
@@ -315,10 +316,22 @@ jQuery(async () => {
     eventSource.on(event_types.MESSAGE_DELETED, onChatEvent);
     eventSource.on(event_types.MESSAGE_EDITED, onChatEvent);
     // Run vector sync tasks on message events
-    // Note: Semantic WI injection happens in the generate_interceptor (rearrangeChat), not here
+    // Semantic WI injection runs after SillyTavern's keyword scan, below.
     eventSource.on(event_types.MESSAGE_SENT, onChatEvent);
     eventSource.on(event_types.MESSAGE_RECEIVED, onChatEvent);
     eventSource.on(event_types.MESSAGE_SWIPED, onChatEvent);
+    // Hook the final World Info scan loop: keyword activation is authoritative
+    // here, and the awaited event completes before ST assembles the prompt.
+    if (event_types.WORLDINFO_SCAN_DONE) {
+        eventSource.on(event_types.WORLDINFO_SCAN_DONE, async (scan) => {
+            if (scan?.state?.next) return;
+            await applySemanticEntriesToPrompt(
+                getContext().chat || [],
+                settings,
+                scan?.activated?.entries,
+            );
+        });
+    }
     // When a chat is deleted, purge its vectors (not full purge, just that chat)
     eventSource.on(event_types.CHAT_DELETED, async (chatId) => {
         if (chatId) {

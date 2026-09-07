@@ -730,25 +730,29 @@ function evaluateLorebookActiveCondition(rule, context) {
     const matchType = settings.matchType || 'any';
     const activeEntries = context.activeLorebookEntries || [];
 
+    const entryMatches = (entry, target) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const targetLower = String(target ?? '').toLowerCase();
+        const keys = Array.isArray(entry.key) ? entry.key : [entry.key];
+        const keyMatches = keys.some(key => {
+            const value = typeof key === 'object' ? (key.text ?? key.keyword ?? '') : key;
+            return String(value ?? '').toLowerCase().includes(targetLower);
+        });
+        const uidMatches = String(entry.uid ?? '').toLowerCase() === targetLower;
+        const lorebookMatches = [entry.lorebookName, entry.world]
+            .some(value => String(value ?? '').toLowerCase() === targetLower);
+        return keyMatches || uidMatches || lorebookMatches;
+    };
+
     if (matchType === 'all') {
         // All entries must be active
         return targetEntries.every(target => {
-            const targetLower = target.toLowerCase();
-            return activeEntries.some(entry => {
-                const entryKey = (entry.key || '').toLowerCase();
-                const entryUid = String(entry.uid || '').toLowerCase();
-                return entryKey.includes(targetLower) || entryUid === targetLower;
-            });
+            return activeEntries.some(entry => entryMatches(entry, target));
         });
     } else {
         // Any entry active (default)
         return targetEntries.some(target => {
-            const targetLower = target.toLowerCase();
-            return activeEntries.some(entry => {
-                const entryKey = (entry.key || '').toLowerCase();
-                const entryUid = String(entry.uid || '').toLowerCase();
-                return entryKey.includes(targetLower) || entryUid === targetLower;
-            });
+            return activeEntries.some(entry => entryMatches(entry, target));
         });
     }
 }
