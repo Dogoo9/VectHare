@@ -24,6 +24,17 @@ import { setExtensionPrompt, getCurrentChatId } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { buildSearchContext } from './conditional-activation.js';
 
+/**
+ * Resolve a lorebook entry UID from vector metadata.
+ * `entryUid` is the canonical field; `uid` and `hash` support older indexes.
+ *
+ * @param {object} metadata - Vector metadata for a lorebook entry
+ * @returns {*} The stored entry UID, or undefined when none is available
+ */
+export function resolveEntryUid(metadata = {}) {
+    return metadata.entryUid ?? metadata.uid ?? metadata.hash;
+}
+
 // ============================================================================
 // WORLD INFO ACTIVATION HOOKS
 // ============================================================================
@@ -93,7 +104,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                     if (score >= threshold) {
                         // Extract WI entry data from metadata
                         const entry = {
-                            uid: meta.uid || meta.hash,
+                            uid: resolveEntryUid(meta),
                             key: meta.keywords || meta.entryName || [],
                             content: meta.text || '',
                             score: score,
@@ -197,12 +208,16 @@ async function getEnabledLorebookCollections(settings, searchContext) {
  * @returns {object[]} Deduplicated entries
  */
 function deduplicateWithActiveEntries(semanticEntries, activeEntries) {
-    const activeUids = new Set(activeEntries.map(e => e.uid));
+    const activeUids = new Set(activeEntries
+        .map(entry => resolveEntryUid(entry))
+        .filter(uid => uid !== undefined && uid !== null)
+        .map(String));
     const activeContents = new Set(activeEntries.map(e => e.content?.trim().toLowerCase()));
 
     return semanticEntries.filter(entry => {
         // Skip if UID already active
-        if (activeUids.has(entry.uid)) {
+        const entryUid = resolveEntryUid(entry);
+        if (entryUid !== undefined && entryUid !== null && activeUids.has(String(entryUid))) {
             return false;
         }
 
