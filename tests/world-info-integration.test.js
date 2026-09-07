@@ -70,6 +70,7 @@ import {
     enhanceWorldInfoEntriesUI,
     initializeWorldInfoIntegration,
     applySemanticEntriesToPrompt,
+    normalizeActiveLorebookEntries,
 } from '../core/world-info-integration.js';
 
 // ============================================================================
@@ -691,19 +692,19 @@ describe('applySemanticEntriesToPrompt', () => {
         getCollectionMeta.mockReturnValue({ sourceName: 'Test' });
     });
 
-    it('should do nothing when settings is null', async () => {
+    it('clears old prompt content when settings are unavailable', async () => {
         await applySemanticEntriesToPrompt([], null);
 
-        expect(setExtensionPrompt).not.toHaveBeenCalled();
+        expect(setExtensionPrompt).toHaveBeenCalledWith('vecthare_world_info', '', 0, 2, false);
     });
 
-    it('should do nothing when world info is disabled', async () => {
+    it('clears old prompt content when semantic world info is disabled', async () => {
         await applySemanticEntriesToPrompt([], { enabled_world_info: false });
 
-        expect(setExtensionPrompt).not.toHaveBeenCalled();
+        expect(setExtensionPrompt).toHaveBeenCalledWith('vecthare_world_info', '', 0, 2, false);
     });
 
-    it('should do nothing when no entries found', async () => {
+    it('clears old prompt content when the new active set is empty', async () => {
         const settings = {
             enabled_world_info: true,
             vecthare_collection_registry: ['lorebook_global_test'],
@@ -713,7 +714,7 @@ describe('applySemanticEntriesToPrompt', () => {
 
         await applySemanticEntriesToPrompt([{ mes: 'Hello' }], settings);
 
-        expect(setExtensionPrompt).not.toHaveBeenCalled();
+        expect(setExtensionPrompt).toHaveBeenLastCalledWith('vecthare_world_info', '', 0, 2, false);
     });
 
     it('should inject entries into extension prompt', async () => {
@@ -834,7 +835,7 @@ describe('applySemanticEntriesToPrompt', () => {
 
         // Should not throw
         await expect(applySemanticEntriesToPrompt([{ mes: 'Query' }], settings)).resolves.not.toThrow();
-        expect(setExtensionPrompt).not.toHaveBeenCalled();
+        expect(setExtensionPrompt).toHaveBeenCalledWith('vecthare_world_info', '', 0, 2, false);
     });
 
     it('should use entry key as fallback when content is empty', async () => {
@@ -861,6 +862,68 @@ describe('applySemanticEntriesToPrompt', () => {
             expect.any(Number),
             false
         );
+    });
+});
+
+describe('World Info generation lifecycle integration', () => {
+    const settings = {
+        enabled_world_info: true,
+        world_info_threshold: 0.3,
+        world_info_top_k: 3,
+        vecthare_collection_registry: ['lorebook_global_test'],
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        isCollectionEnabled.mockReturnValue(true);
+        shouldCollectionActivate.mockResolvedValue(true);
+        getCollectionMeta.mockReturnValue({ sourceName: 'Test Lorebook' });
+        applyChatCollectionPolicy.mockImplementation(ids => ids);
+    });
+
+    it('normalizes keyword-only activation with lorebook identity and passes it to search context', async () => {
+        queryCollection.mockResolvedValue({ hashes: [], metadata: [] });
+        const active = new Map([['Castle.7', { uid: 7, key: ['castle'], content: 'Keyword lore', world: 'Castle' }]]);
+
+        await applySemanticEntriesToPrompt([{ mes: 'castle' }], settings, active);
+
+        expect(buildSearchContext).toHaveBeenCalledWith(expect.any(Array), expect.any(Number), expect.any(Array),
+            expect.objectContaining({ activeLorebookEntries: [expect.objectContaining({ uid: 7, key: ['castle'], content: 'Keyword lore', lorebookName: 'Castle' })] }));
+    });
+
+    it('injects a semantic-only activation', async () => {
+        queryCollection.mockResolvedValue({ metadata: [{ uid: 8, text: 'Semantic lore', score: 0.9 }] });
+
+        const result = await applySemanticEntriesToPrompt([{ mes: 'related idea' }], settings, []);
+
+        expect(result).toEqual([expect.objectContaining({ uid: 8, content: 'Semantic lore' })]);
+        expect(setExtensionPrompt).toHaveBeenLastCalledWith('vecthare_world_info', 'Semantic lore', 0, 2, false);
+    });
+
+    it('does not inject the same UID activated by keyword and semantic paths', async () => {
+        queryCollection.mockResolvedValue({ metadata: [{ uid: 9, text: 'Duplicate lore', score: 0.9 }] });
+        const active = [{ uid: 9, key: ['duplicate'], content: 'Duplicate lore', world: 'Book' }];
+
+        const result = await applySemanticEntriesToPrompt([{ mes: 'duplicate' }], settings, active);
+
+        expect(result).toEqual([]);
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes prior semantic prompt when a keyword leaves the next scan window', async () => {
+        queryCollection
+            .mockResolvedValueOnce({ metadata: [{ uid: 10, text: 'Temporary lore', score: 0.9 }] })
+            .mockResolvedValueOnce({ metadata: [] });
+
+        await applySemanticEntriesToPrompt([{ mes: 'temporary keyword' }], settings, []);
+        await applySemanticEntriesToPrompt([{ mes: 'new scan window' }], settings, []);
+
+        expect(setExtensionPrompt).toHaveBeenLastCalledWith('vecthare_world_info', '', 0, 2, false);
+    });
+
+    it('adapts alternate SillyTavern entry fields', () => {
+        expect(normalizeActiveLorebookEntries([{ id: 'a', keys: ['x'], text: 'y', book: 'z' }]))
+            .toEqual([expect.objectContaining({ uid: 'a', key: ['x'], content: 'y', lorebookName: 'z' })]);
     });
 });
 
