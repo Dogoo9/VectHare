@@ -658,7 +658,7 @@ function renderStageChunks(chunks, stageName, data) {
                             ${chunk.matchedKeywords !== undefined ? `
                             <div class="vecthare-debug-meta-item">
                                 <span class="meta-label">Keywords Matched</span>
-                                <span class="meta-value">${chunk.matchedKeywords} keyword${chunk.matchedKeywords !== 1 ? 's' : ''}</span>
+                                <span class="meta-value">${Array.isArray(chunk.matchedKeywords) ? chunk.matchedKeywords.length : chunk.matchedKeywords} keyword${(Array.isArray(chunk.matchedKeywords) ? chunk.matchedKeywords.length : chunk.matchedKeywords) !== 1 ? 's' : ''}</span>
                             </div>` : ''}
                             ${chunk.fusionMethod ? `
                             <div class="vecthare-debug-meta-item">
