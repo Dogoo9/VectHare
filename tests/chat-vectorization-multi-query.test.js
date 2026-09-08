@@ -33,7 +33,28 @@ vi.mock('../core/core-vector-api.js', () => ({
     purgeVectorIndex: vi.fn(),
 }));
 
-import { queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
+import { extension_settings } from '../core/../../../../extensions.js';
+import { filterManuallyDisabledChunks, queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
+
+describe('per-entry retrieval state', () => {
+    it('keeps only entries enabled in the visualizer or backend metadata', () => {
+        const vecthare = extension_settings.vecthare;
+        vecthare.vecthare_chunk_meta_2 = { enabled: false };
+        vecthare.vecthare_chunk_meta_3 = { disabled: true };
+
+        const filtered = filterManuallyDisabledChunks([
+            { hash: 1, metadata: {} },
+            { hash: 2, metadata: {} },
+            { hash: 3, metadata: {} },
+            { hash: 4, metadata: { enabled: false } },
+            { hash: 5, metadata: { disabled: true } },
+        ]);
+
+        expect(filtered.map(chunk => chunk.hash)).toEqual([1]);
+        delete vecthare.vecthare_chunk_meta_2;
+        delete vecthare.vecthare_chunk_meta_3;
+    });
+});
 
 describe('queryAndMergeCollections multi-query', () => {
     beforeEach(() => queryMultipleCollections.mockReset());
@@ -49,9 +70,27 @@ describe('queryAndMergeCollections multi-query', () => {
         );
 
         expect(queryMultipleCollections).toHaveBeenCalledOnce();
-        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 5, 0.2, expect.any(Object));
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0.2, expect.any(Object));
         expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
+        expect(results.map(result => result.score)).toEqual([0.9, 0.8]);
+        expect(results[0].fusedScore).toBeCloseTo(1 / 61);
+    });
+
+    it('requests up to 500 Qdrant candidates when configured to pull 500 entries', async () => {
+        queryMultipleCollections.mockResolvedValue({ qdrant_collection: { hashes: [], metadata: [] } });
+
+        await queryAndMergeCollections(
+            ['qdrant_collection'],
+            'query',
+            { vector_backend: 'qdrant', top_k: 500, candidate_k_max: 500 },
+            [],
+            { trace: [], chunkFates: {} },
+        );
+
+        expect(queryMultipleCollections).toHaveBeenCalledWith(
+            ['qdrant_collection'], 'query', 500, 0, expect.any(Object),
+        );
     });
 
     it('keeps successful collections when another collection fails', async () => {

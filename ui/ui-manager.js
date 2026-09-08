@@ -513,9 +513,14 @@ export function renderSettings(containerId, settings, callbacks) {
                             <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
 
                             <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Top K</small></label>
-                                <input id="vecthare_topk" type="number" class="vecthare-input" min="1" style="width:90px;" />
-                                <small class="vecthare_hint" style="margin-left:8px;">Number of results to retrieve per collection</small>
+                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Max Entries to Inject: <span id="vecthare_topk_value">3</span></small></label>
+                                <input id="vecthare_topk" type="range" class="vecthare-slider" min="1" max="500" step="1" />
+                                <small class="vecthare_hint" style="margin-left:8px;">Final output cap after enabled-state, keyword, score, and condition filtering</small>
+                            </div>
+                            <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                                <label for="vecthare_candidate_k" style="margin:0; white-space:nowrap;"><small>Qdrant Candidates: <span id="vecthare_candidate_k_value">25</span></small></label>
+                                <input id="vecthare_candidate_k" type="range" class="vecthare-slider" min="1" max="500" step="1" />
+                                <small class="vecthare_hint" style="margin-left:8px;">Entries searched before filtering; raising this does not inject the whole collection</small>
                             </div>
 
                             <label style="margin-top: 16px;">
@@ -1639,9 +1644,13 @@ function bindSettingsEvents(settings, callbacks) {
                 const { hasVectors, allMatches } = await doesChatHaveVectors(settings);
 
                 if (!hasVectors) {
-                    // No vectors found anywhere - open vectorizer panel
-                    $checkbox.prop('checked', false);
-                    toastr.info('Set up your chat vectorization first');
+                    // Preserve the user's choice while they create the initial
+                    // index. Previously this branch reset the checkbox and
+                    // never enabled auto-sync after opening the vectorizer, so
+                    // future chat messages were silently left out.
+                    setCollectionAutoSync(collectionId, true);
+                    $checkbox.prop('checked', true);
+                    toastr.info('Set up the initial chat index. Auto-sync will keep it updated afterward.');
                     openContentVectorizer('chat');
                     return;
                 }
@@ -2090,11 +2099,29 @@ function bindSettingsEvents(settings, callbacks) {
         .val((settings.top_k ?? settings.insert) || 3)
         .on('input', function() {
             const value = parseInt($(this).val());
-            const safeValue = isNaN(value) ? (settings.insert || 3) : value;
+            const safeValue = isNaN(value) ? (settings.insert || 3) : Math.max(1, Math.min(500, value));
+            $('#vecthare_topk_value').text(safeValue);
             settings.top_k = safeValue;
             applySettingsSnapshot(settings);
             saveSettingsDebounced();
         });
+    $('#vecthare_topk_value').text((settings.top_k ?? settings.insert) || 3);
+
+    const defaultCandidateK = Math.min(500, Math.max(
+        ((settings.top_k ?? settings.insert) || 3) * 4,
+        ((settings.top_k ?? settings.insert) || 3) + 20,
+    ));
+    $('#vecthare_candidate_k')
+        .val(settings.candidate_k ?? defaultCandidateK)
+        .on('input', function() {
+            const value = parseInt($(this).val());
+            const safeValue = isNaN(value) ? defaultCandidateK : Math.max(1, Math.min(500, value));
+            $('#vecthare_candidate_k_value').text(safeValue);
+            settings.candidate_k = safeValue;
+            applySettingsSnapshot(settings);
+            saveSettingsDebounced();
+        });
+    $('#vecthare_candidate_k_value').text(settings.candidate_k ?? defaultCandidateK);
 
     // World Info Integration settings
     $('#vecthare_enabled_world_info')

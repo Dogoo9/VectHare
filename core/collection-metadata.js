@@ -514,7 +514,14 @@ export function applyChatCollectionPolicy(collectionIds, chatId, options = {}) {
  * @param {boolean} autoSync Whether auto-sync is enabled
  */
 export function setCollectionAutoSync(collectionId, autoSync) {
-    setCollectionMeta(collectionId, { autoSync: autoSync });
+    // An auto-synced collection must also be eligible for retrieval. Keeping
+    // these flags independent allowed a chat to continue receiving vectors
+    // while its collection remained disabled, so none of that history could
+    // ever be pulled into a generation.
+    setCollectionMeta(collectionId, {
+        autoSync: autoSync,
+        ...(autoSync ? { enabled: true } : {}),
+    });
 }
 
 /**
