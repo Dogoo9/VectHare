@@ -32,6 +32,18 @@ const defaultCollectionMeta = {
     createdAt: null,
     lastUsed: null,
     queryCount: 0,
+    collectionSize: null,
+    collectionType: 'unknown',
+    fusionWeight: 1,
+    sourcePriority: null,
+    authority: 0,
+    embedding: {
+        provider: null,
+        modelId: null,
+        dimension: null,
+        distanceMetric: null,
+        indexVersion: null,
+    },
 
     // =========================================================================
     // ACTIVATION TRIGGERS (PRIMARY METHOD - Like Lorebook)
@@ -267,6 +279,10 @@ export function getCollectionMeta(collectionId) {
     return {
         ...defaultCollectionMeta,
         ...stored,
+        embedding: {
+            ...defaultCollectionMeta.embedding,
+            ...(stored.embedding || {}),
+        },
     };
 }
 
@@ -290,6 +306,11 @@ export function setCollectionMeta(collectionId, data) {
         ...defaultCollectionMeta,
         ...existing,
         ...data,
+        embedding: {
+            ...defaultCollectionMeta.embedding,
+            ...(existing.embedding || {}),
+            ...(data.embedding || {}),
+        },
     };
 
     saveSettingsDebounced();
@@ -918,6 +939,11 @@ export function ensureCollectionMeta(collectionId, initialData = {}) {
             temporalDecay: getDefaultDecayForType(collectionType),
             createdAt: Date.now(),
             ...initialData,
+            collectionType,
+            embedding: {
+                ...defaultCollectionMeta.embedding,
+                ...(initialData.embedding || {}),
+            },
         };
         saveSettingsDebounced();
         console.log(`VectHare: Created metadata for new collection ${collectionId} (type: ${collectionType})`);

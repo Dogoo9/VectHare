@@ -1,0 +1,18 @@
+[
+  {
+    "name": "exact-and-paraphrase",
+    "queries": [
+      {"relevance":{"a":3,"b":2},"dense":[{"hash":"b","score":0.91},{"hash":"x","score":0.88},{"hash":"a","score":0.84},{"hash":"y","score":0.7}],"lexical":[{"hash":"a","bm25Score":8},{"hash":"x","bm25Score":5},{"hash":"b","bm25Score":3},{"hash":"z","bm25Score":2}],"reranker":["a","b","x","y"]},
+      {"relevance":{"c":3,"d":1},"dense":[{"hash":"c","score":0.93},{"hash":"u","score":0.85},{"hash":"d","score":0.8}],"lexical":[{"hash":"d","bm25Score":7},{"hash":"c","bm25Score":6},{"hash":"v","bm25Score":4}],"reranker":["c","d","u"]},
+      {"relevance":{"e":2},"dense":[{"hash":"w","score":0.9},{"hash":"e","score":0.87},{"hash":"q","score":0.7}],"lexical":[{"hash":"e","bm25Score":5},{"hash":"w","bm25Score":4},{"hash":"r","bm25Score":2}],"reranker":["e","w","q"]}
+    ]
+  },
+  {
+    "name": "noisy-components",
+    "queries": [
+      {"relevance":{"f":3,"g":2},"dense":[{"hash":"f","score":0.95},{"hash":"n","score":0.92},{"hash":"g","score":0.75}],"lexical":[{"hash":"g","bm25Score":9},{"hash":"n","bm25Score":8},{"hash":"f","bm25Score":4}],"reranker":["f","g","n"]},
+      {"relevance":{"h":3},"dense":[{"hash":"m","score":0.89},{"hash":"h","score":0.86},{"hash":"o","score":0.8}],"lexical":[{"hash":"h","bm25Score":7},{"hash":"m","bm25Score":6},{"hash":"p","bm25Score":3}],"reranker":["h","m","o"]},
+      {"relevance":{"i":3,"j":1},"dense":[{"hash":"j","score":0.9},{"hash":"i","score":0.88},{"hash":"s","score":0.83}],"lexical":[{"hash":"i","bm25Score":6},{"hash":"t","bm25Score":5},{"hash":"j","bm25Score":4}],"reranker":["i","j","s"]}
+    ]
+  }
+]

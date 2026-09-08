@@ -18,7 +18,7 @@ import { cleanText } from './text-cleaning.js';
 import {
     getSavedHashes,
     insertVectorItems,
-    queryCollection,
+    queryMultipleCollections,
     queryActiveCollections,
     deleteVectorItems,
     purgeVectorIndex,
@@ -41,7 +41,7 @@ import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '
 import { Queue, LRUCache } from '../utils/data-structures.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
-import { configureLogger, logger } from '../utils/logger.js';
+import { nextCandidateK, resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -261,7 +261,7 @@ function filterSceneDisabledChunks(chunks) {
  * @param {object} settings VectHare settings
  * @returns {Promise<object[]>} Filtered chunks
  */
-async function applyChunkConditions(chunks, chat, settings) {
+async function applyChunkConditions(chunks, chat, settings, trackActivations = true) {
     // First filter out chunks disabled by scenes
     let filtered = filterSceneDisabledChunks(chunks);
 
@@ -293,11 +293,11 @@ async function applyChunkConditions(chunks, chat, settings) {
     const conditionFilteredChunks = filterChunksByConditions(chunksWithConditions, context);
 
     // Track activation for frequency conditions
-    conditionFilteredChunks.forEach(chunk => {
-        if (chunk.conditions?.enabled) {
-            trackChunkActivation(chunk.hash, chat.length);
-        }
-    });
+    if (trackActivations) {
+        conditionFilteredChunks.forEach(chunk => {
+            if (chunk.conditions?.enabled) trackChunkActivation(chunk.hash, chat.length);
+        });
+    }
 
     console.log(`VectHare: Chunk conditions filtered ${filtered.length} → ${conditionFilteredChunks.length}`);
     return conditionFilteredChunks;
@@ -624,8 +624,10 @@ function buildSearchQuery(chat, settings) {
  * @param {object} debugData Debug tracking object
  * @returns {Promise<object[]>} Array of chunk objects with scores
  */
-async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
+export async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
+    const totalStart = performance.now();
     let chunksForVisualizer = [];
+    const collectionResultLists = [];
     const effectiveTopK = settings.top_k ?? settings.insert;
 
     // PERF: Build hash-to-message Map once for O(1) lookups instead of O(n) find() per chunk
@@ -639,9 +641,32 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
         }
     }
 
+    const backendStart = performance.now();
+    let resultMap = {};
+    try {
+        resultMap = await queryMultipleCollections(
+            activeCollections,
+            queryText,
+            effectiveTopK,
+            settings.score_threshold || 0,
+            settings,
+        );
+    } catch (error) {
+        // A request-wide failure is reported for every collection; per-collection
+        // failures are represented by the backend as empty results with `error`.
+        for (const collectionId of activeCollections) {
+            resultMap[collectionId] = { hashes: [], metadata: [], error: error.message };
+        }
+    }
+    const backendSearchMs = performance.now() - backendStart;
+    const normalizationStart = performance.now();
+
     for (const collectionId of activeCollections) {
         try {
-            const queryResults = await queryCollection(collectionId, queryText, effectiveTopK, settings);
+            const queryResults = resultMap[collectionId] || { hashes: [], metadata: [] };
+            if (queryResults.error) {
+                throw new Error(queryResults.error);
+            }
 
             // TRACE: Vector query results for this collection
             addTrace(debugData, 'vector_search', `Query completed for ${collectionId}`, {
@@ -661,6 +686,7 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
             // Build chunks with text for visualizer
             const collectionChunks = queryResults.metadata.map((meta, idx) => {
                 const hash = queryResults.hashes[idx];
+                const normalizedMetadata = { ...meta, collectionId };
 
                 // Prefer text from metadata (stored in vector DB)
                 let text = meta.text;
@@ -692,14 +718,14 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
 
                 return {
                     hash: hash,
-                    metadata: meta,
+                    metadata: normalizedMetadata,
                     score: meta.score || 1.0,
                     originalScore: meta.originalScore,
                     keywordBoost: meta.keywordBoost,
                     matchedKeywords: meta.matchedKeywords,
                     matchedKeywordsWithWeights: meta.matchedKeywordsWithWeights,
                     keywordBoosted: meta.keywordBoosted,
-                    similarity: meta.score || 1.0,
+                    similarity: meta.score ?? 1.0,
                     text: text,
                     index: meta.messageId || meta.index || 0,
                     collectionId: collectionId,
@@ -711,18 +737,64 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
                 };
             });
 
-            chunksForVisualizer.push(...collectionChunks);
+            for (const chunk of collectionChunks) {
+                chunksById.set(`${collectionId}:${chunk.hash}`, chunk);
+            }
         } catch (error) {
             console.warn(`VectHare: Failed to query collection ${collectionId}:`, error.message);
             addTrace(debugData, 'vector_search', `Query failed for ${collectionId}`, {
                 error: error.message
             });
         }
+      }
+
+      // Cheap, score-independent rejection happens before boosts, decay, groups,
+      // or the paid reranker. Collection scope/lock rules were applied when
+      // activeCollections was built immediately before this function.
+      let eligible = [...chunksById.values()].filter(chunk => {
+          const meta = getChunkMetadata(chunk.hash);
+          const stored = chunk.metadata || {};
+          return meta?.disabled !== true && meta?.deleted !== true && meta?.enabled !== false
+              && stored.disabled !== true && stored.deleted !== true && stored.enabled !== false;
+      });
+      eligible = (await applyConditionsStage(eligible, chat, settings, debugData, false));
+      eligible = deduplicateChunks(eligible, chat, settings, debugData).toInject;
+
+      if (eligible.length >= finalK || exhaustedCollections.size === activeCollections.length || requestK === candidateKMax) {
+          addTrace(debugData, 'candidate_pool', 'Adaptive candidate retrieval complete', {
+              candidateK: requestK, candidateKMax, finalK, eligible: eligible.length,
+              exhaustedCollections: exhaustedCollections.size
+          });
+          // Frequency/cooldown activation is recorded once, not once per refill.
+          return applyConditionsStage(eligible, chat, settings, debugData, true);
+      }
+
+      requestK = nextCandidateK(requestK, candidateKMax);
     }
 
-    // Sort merged results by score (descending) and limit to topK
-    chunksForVisualizer.sort((a, b) => b.score - a.score);
-    chunksForVisualizer = chunksForVisualizer.slice(0, effectiveTopK);
+    // Never compare raw scores across collections. Each backend list is already
+    // ranked, so weighted RRF provides stable fusion without per-query min/max.
+    const fusion = fuseCollectionResults(collectionResultLists, {
+        rrfK: settings.collection_rrf_k,
+        sourcePriorities: settings.collection_source_priorities,
+    });
+    chunksForVisualizer = fusion.results.slice(0, effectiveTopK);
+    addTrace(debugData, 'collection_fusion', 'Merged ranked collection lists', {
+        method: fusion.method,
+        heterogeneous: fusion.heterogeneous,
+        embeddingSpaces: fusion.embeddingSpaces,
+        hasUnknownEmbeddingSpace: fusion.hasUnknownEmbeddingSpace,
+    });
+
+    const normalizationMs = performance.now() - normalizationStart;
+    const timings = {
+        queryEmbeddingMs: resultMap._timings?.queryEmbeddingMs || 0,
+        backendSearchMs: resultMap._timings?.backendSearchMs ?? backendSearchMs,
+        resultNormalizationMs: normalizationMs,
+        totalRetrievalMs: performance.now() - totalStart,
+    };
+    console.debug('[VectHare] Retrieval timings', timings);
+    addTrace(debugData, 'performance', 'Retrieval timings', timings);
 
     return chunksForVisualizer;
 }
@@ -1036,7 +1108,7 @@ function applyTemporalDecayStage(chunks, chat, settings, threshold, debugData) {
  * @param {object} debugData Debug tracking object
  * @returns {Promise<object[]>} Chunks that passed conditions
  */
-async function applyConditionsStage(chunks, chat, settings, debugData) {
+async function applyConditionsStage(chunks, chat, settings, debugData, trackActivations = true) {
     const beforeCount = chunks.length;
     // PERF: Build a Map of hash -> chunk data for tracking instead of copying entire array
     const chunkDataByHash = new Map(chunks.map(c => [c.hash, { score: c.score, conditions: c.metadata?.conditions }]));
@@ -1046,7 +1118,7 @@ async function applyConditionsStage(chunks, chat, settings, debugData) {
         hasConditions: chunks.some(c => c.metadata?.conditions)
     });
 
-    const filtered = await applyChunkConditions(chunks, chat, settings);
+    const filtered = await applyChunkConditions(chunks, chat, settings, trackActivations);
 
     // Record which chunks were dropped by conditions
     const afterConditionsHashes = new Set(filtered.map(c => c.hash));
@@ -1723,10 +1795,12 @@ export async function rearrangeChat(chat, settings, type) {
         debugData.collectionId = activeCollections.length > 0 ? activeCollections.join(', ') : 'world_info_only';
         debugData.collectionsQueried = activeCollections;
         debugData.collectionDecisions = collectionDecisions;
-        const effectiveTopK = settings.top_k ?? settings.insert;
+        const { candidateK, rerankK, finalK, candidateKMax } = resolveRetrievalBudgets(settings);
         debugData.settings = {
             threshold: settings.score_threshold,
-            topK: effectiveTopK,
+            topK: finalK,
+            candidateK,
+            rerankK,
             temporal_decay: settings.temporal_decay,
             protect: settings.protect,
             chatLength: chat.length
@@ -1736,7 +1810,10 @@ export async function rearrangeChat(chat, settings, type) {
             collectionsQueried: activeCollections,
             queryLength: queryText.length,
             threshold: settings.score_threshold,
-            topK: effectiveTopK,
+            finalK,
+            candidateK,
+            candidateKMax,
+            rerankK,
             protect: settings.protect
         });
 
@@ -1745,26 +1822,6 @@ export async function rearrangeChat(chat, settings, type) {
         let chunks = await queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData);
         const backendLatencyMs = performance.now() - backendStarted;
         const candidatesRetrieved = chunks.length;
-
-        // === STAGE 4.1: Filter disabled chunks ===
-        const beforeDisabledFilter = chunks.length;
-        chunks = chunks.filter(chunk => {
-            const meta = getChunkMetadata(chunk.hash);
-            if (meta?.disabled === true || meta?.enabled === false) {
-                recordChunkFate(debugData, chunk.hash, 'disabled_filter', 'dropped',
-                                'Chunk is disabled', { hash: chunk.hash });
-                return false;
-            }
-            return true;
-        });
-        if (chunks.length !== beforeDisabledFilter) {
-            logger.debug(`VectHare: Disabled filter: ${beforeDisabledFilter} → ${chunks.length} chunks (${beforeDisabledFilter - chunks.length} disabled chunks removed)`);
-            addTrace(debugData, 'disabled_filter', 'Disabled chunks removed', {
-                before: beforeDisabledFilter,
-                after: chunks.length,
-                removed: beforeDisabledFilter - chunks.length
-            });
-        }
 
         // === STAGE 4.3: Boost chunks with matching query keywords ===
         if (chunks.length > 0) {
@@ -1836,20 +1893,6 @@ export async function rearrangeChat(chat, settings, type) {
             debugData.stats.summariesExpanded = expandedCount;
         }
 
-        // === STAGE 5: BananaBread reranking (optional) ===
-        let rerankerLatencyMs = 0;
-        if (settings.source === 'bananabread' && settings.bananabread_rerank && chunks.length > 0) {
-            addTrace(debugData, 'rerank', 'Starting BananaBread reranking', {
-                chunks: chunks.length,
-                query: queryText.substring(0, 100)
-            });
-            const rerankerStarted = performance.now();
-            chunks = await rerankWithBananaBread(queryText, chunks, settings);
-            rerankerLatencyMs = performance.now() - rerankerStarted;
-            debugData.stages.afterRerank = [...chunks];
-            addTrace(debugData, 'rerank', 'Reranking complete', { rerankedCount: chunks.length });
-        }
-
         // === STAGE 6: Threshold filter ===
         const threshold = settings.score_threshold || 0;
         chunks = applyThresholdFilter(chunks, threshold, debugData);
@@ -1860,15 +1903,27 @@ export async function rearrangeChat(chat, settings, type) {
         debugData.stages.afterDecay = [...chunks];
         debugData.stats.afterDecay = chunks.length;
 
-        // === STAGE 8: Chunk conditions ===
-        chunks = await applyConditionsStage(chunks, chat, settings, debugData);
-        debugData.stages.afterConditions = [...chunks];
-        debugData.stats.afterConditions = chunks.length;
-
         // === STAGE 8.5: Chunk Groups and Links ===
         chunks = await applyGroupsAndLinksStage(chunks, activeCollections, settings, debugData);
         debugData.stages.afterGroups = [...chunks];
         debugData.stats.afterGroups = chunks.length;
+
+        // === STAGE 8.7: Expensive reranking ===
+        // Group/link boosts participate in candidate selection, while only the
+        // explicitly budgeted prefix is sent to the external reranker.
+        if (settings.source === 'bananabread' && settings.bananabread_rerank && chunks.length > 0) {
+            chunks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+            const rerankCandidates = chunks.slice(0, rerankK);
+            addTrace(debugData, 'rerank', 'Starting BananaBread reranking', {
+                candidates: chunks.length,
+                rerankK: rerankCandidates.length,
+                query: queryText.substring(0, 100)
+            });
+            const reranked = await rerankWithBananaBread(queryText, rerankCandidates, settings);
+            chunks = [...reranked, ...chunks.slice(rerankK)];
+            debugData.stages.afterRerank = [...chunks];
+            addTrace(debugData, 'rerank', 'Reranking complete', { rerankedCount: reranked.length });
+        }
 
         // Store for legacy visualizer
         window.VectHare_LastSearch = {
@@ -1883,7 +1938,10 @@ export async function rearrangeChat(chat, settings, type) {
         logger.debug(`[VectHare Deduplication] Starting with ${chunks.length} chunks before deduplication`);
         logger.debug(`[VectHare Deduplication] Current chat has ${chat.length} messages`);
 
-        const { toInject: chunksToInject, skipped: skippedDuplicates } = deduplicateChunks(chunks, chat, settings, debugData);
+        // The injection limit is deliberately enforced only now, after the last
+        // ranking stage. Mandatory/group-linked members consume this same budget.
+        const chunksToInject = selectFinalChunks(chunks, finalK);
+        const skippedDuplicates = [];
 
         logger.debug(`[VectHare Deduplication] After deduplication: ${chunksToInject.length} to inject, ${skippedDuplicates.length} skipped`);
         if (skippedDuplicates.length > 0) {

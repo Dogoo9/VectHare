@@ -133,7 +133,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                     const score = meta.score || 0;
 
                     if (score >= threshold) {
-                        const storedUid = meta.uid ?? meta.entryUid ?? meta.hash;
+                        const storedUid = resolveEntryUid(meta);
                         const liveEntry = liveLorebook.entriesByUid.get(normalizeWorldInfoUid(storedUid));
                         const liveContent = typeof liveEntry?.content === 'string' ? liveEntry.content.trim() : liveEntry?.content;
                         const storedDisabled = meta.disabled === true || meta.metadata?.disabled === true;
@@ -147,9 +147,6 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                             uid: liveEntry?.uid ?? storedUid,
                             key: liveEntry?.key ?? meta.keywords ?? meta.entryName ?? [],
                             content: liveEntry?.content ?? meta.text ?? '',
-                            uid: resolveEntryUid(meta),
-                            key: meta.keywords || meta.entryName || [],
-                            content: meta.text || '',
                             score: score,
                             lorebookName: collection.name,
                             collectionId: rawCollectionId,

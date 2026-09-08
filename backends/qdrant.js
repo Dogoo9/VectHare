@@ -32,6 +32,7 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
 import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
+import AsyncUtils from '../utils/async-utils.js';
 
 const BACKEND_TYPE = 'qdrant';
 const MULTITENANCY_COLLECTION = 'vecthare_multitenancy';
@@ -428,10 +429,11 @@ export class QdrantBackend extends VectorBackend {
         return { hashes, metadata };
     }
 
-    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings, queryVector = null) {
         const results = {};
 
-        for (const collectionId of collectionIds) {
+        const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
+        await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
             try {
                 const strippedCollectionId = this._stripRegistryPrefix(collectionId);
                 const actualCollectionId = getActualCollectionId(strippedCollectionId, settings);
@@ -455,7 +457,7 @@ export class QdrantBackend extends VectorBackend {
                 } else {
                     console.warn(`[Qdrant] No queryVector or searchText for ${collectionId}`);
                     results[collectionId] = { hashes: [], metadata: [] };
-                    continue;
+                    return;
                 }
 
                 // Add content_type filter for multitenancy mode
@@ -496,7 +498,7 @@ export class QdrantBackend extends VectorBackend {
                 console.error(`Failed to query collection ${collectionId}:`, error);
                 results[collectionId] = { hashes: [], metadata: [], error: error.message };
             }
-        }
+        }), concurrency);
 
         return results;
     }

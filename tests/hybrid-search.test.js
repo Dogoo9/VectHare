@@ -13,6 +13,7 @@ vi.mock('../backends/backend-manager.js', () => ({
 // Mock the bm25-scorer - provide a working implementation
 vi.mock('../core/bm25-scorer.js', () => ({
     tokenize: vi.fn((text) => text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0)),
+    tokenizeSimple: vi.fn((text) => text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0)),
     createBM25Scorer: vi.fn((documents, options) => {
         // Simple mock BM25 scorer that scores based on query term overlap
         const docs = documents.map(d => {
@@ -49,7 +50,9 @@ import {
     hybridSearch,
     reciprocalRankFusion,
     weightedCombination,
+    heuristicWeightedFusion,
 } from '../core/hybrid-search.js';
+import { indexLexicalItems, purgeAllLexicalIndexes } from '../core/lexical-index.js';
 
 // ============================================================================
 // Constants Tests
@@ -333,9 +336,9 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         // Hash 1 has max scores in both, normalized to 1.0 each
-        // combinedScore should be close to 1.0 (0.5 * 1.0 + 0.5 * 1.0)
+        // Vector scores are bounded directly and BM25 uses a fixed saturation curve.
         const hash1Result = results.find(r => r.hash === 1);
-        expect(hash1Result.combinedScore).toBeCloseTo(1.0, 1);
+        expect(hash1Result.combinedScore).toBeCloseTo(0.625, 3);
     });
 
     it('should respect custom alpha/beta weights', () => {
@@ -376,9 +379,9 @@ describe('weightedCombination', () => {
         // All scores should be normalized
         for (const r of results) {
             expect(r.vectorScore).toBeGreaterThanOrEqual(0);
-            expect(r.vectorScore).toBeLessThanOrEqual(1);
+            expect(r.normalizedVectorScore).toBeLessThanOrEqual(1);
             expect(r.textScore).toBeGreaterThanOrEqual(0);
-            expect(r.textScore).toBeLessThanOrEqual(1);
+            expect(r.normalizedTextScore).toBeLessThanOrEqual(1);
         }
     });
 
@@ -429,7 +432,7 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         const hash1Entry = results.find(r => r.hash === 1);
-        expect(hash1Entry.vectorScore).toBe(1.0); // Normalized max in vector list
+        expect(hash1Entry.vectorScore).toBe(0.8); // Query-independent bounded value
         expect(hash1Entry.textScore).toBe(0); // Not in text list
     });
 
@@ -448,7 +451,7 @@ describe('weightedCombination', () => {
 
         const hash2Entry = results.find(r => r.hash === 2);
         expect(hash2Entry.vectorScore).toBe(0); // Not in vector list
-        expect(hash2Entry.textScore).toBe(1.0); // Normalized max in text list
+        expect(hash2Entry.textScore).toBeCloseTo(0.625); // Fixed BM25 saturation
     });
 
     it('should skip results with undefined/null hash', () => {
@@ -487,9 +490,8 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         expect(results).toHaveLength(1);
-        // With single results, min-max normalization produces 0 for each
-        // because (score - min) / range = 0 when there's only one value
-        expect(results[0].combinedScore).toBe(0);
+        // A single-result batch retains meaningful, query-independent scores.
+        expect(results[0].combinedScore).toBeCloseTo(0.7125);
     });
 
     it('should handle all same scores correctly', () => {
@@ -520,6 +522,7 @@ describe('hybridSearch', () => {
     let mockBackend;
 
     beforeEach(() => {
+        purgeAllLexicalIndexes();
         mockBackend = {
             constructor: { name: 'MockBackend' },
             supportsHybridSearch: vi.fn(() => false),
@@ -544,7 +547,7 @@ describe('hybridSearch', () => {
             ],
         });
 
-        const settings = { hybrid_native_prefer: true };
+        const settings = { hybrid_native_prefer: true, hybrid_fusion_method: 'rrf' };
         const results = await hybridSearch('test-collection', 'search query', 10, settings);
 
         expect(mockBackend.supportsHybridSearch).toHaveBeenCalled();
@@ -563,7 +566,7 @@ describe('hybridSearch', () => {
             ],
         });
 
-        const settings = { hybrid_native_prefer: true };
+        const settings = { hybrid_native_prefer: true, hybrid_fusion_method: 'rrf' };
         const results = await hybridSearch('test-collection', 'dragon', 10, settings);
 
         expect(mockBackend.hybridQuery).toHaveBeenCalled();
@@ -605,6 +608,30 @@ describe('hybridSearch', () => {
         expect(mockBackend.queryCollection).toHaveBeenCalled();
     });
 
+    it('uses independent dense and full-collection lexical candidate generators', async () => {
+        indexLexicalItems('independent', [
+            { hash: 1, text: 'exact quasar identifier' },
+            { hash: 2, text: 'quasar appears in both' },
+            { hash: 4, text: 'unrelated indexed document' },
+        ]);
+        mockBackend.queryCollection.mockResolvedValue({
+            hashes: [3, 2],
+            metadata: [
+                { text: 'semantic paraphrase only', score: 0.95 },
+                { text: 'quasar appears in both', score: 0.8 },
+            ],
+        });
+
+        const results = await hybridSearch('independent', 'quasar', 10, {});
+
+        expect(results.hashes).toContain(1); // lexical only
+        expect(results.hashes).toContain(3); // dense only
+        const shared = results.metadata.find(result => result.hash === 2);
+        expect(shared.vectorRank).toBeDefined();
+        expect(shared.textRank).toBeDefined();
+        expect(shared.score).toBeGreaterThan(results.metadata.find(result => result.hash === 1).score);
+    });
+
     it('should return empty results when vector query fails', async () => {
         mockBackend.queryCollection.mockRejectedValue(new Error('Query failed'));
 
@@ -635,7 +662,7 @@ describe('hybridSearch', () => {
         expect(results).toEqual({ hashes: [], metadata: [] });
     });
 
-    it('should use RRF fusion method by default', async () => {
+    it('should use the evaluation-selected heuristic fusion method by default', async () => {
         mockBackend.queryCollection.mockResolvedValue({
             hashes: [1, 2],
             metadata: [
@@ -647,7 +674,7 @@ describe('hybridSearch', () => {
         const settings = {};
         const results = await hybridSearch('test-collection', 'dragon', 10, settings);
 
-        expect(results.metadata[0].fusionMethod).toBe('rrf');
+        expect(results.metadata[0].fusionMethod).toBe('heuristic_weighted');
     });
 
     it('should use weighted fusion when specified', async () => {
@@ -903,7 +930,7 @@ describe('Edge Cases', () => {
 
             expect(() => weightedCombination(vectorResults, [])).not.toThrow();
             const results = weightedCombination(vectorResults, []);
-            expect(results[0].vectorScore).toBe(1); // Normalized
+            expect(results[0].normalizedVectorScore).toBe(1);
         });
 
         it('should handle very small score values', () => {
@@ -942,9 +969,9 @@ describe('Edge Cases', () => {
             const results = weightedCombination(vectorResults, textResults, 0.8, 0.8);
 
             // Hash 1 has normalized scores of 1.0 each
-            // Combined score = 0.8 * 1.0 + 0.8 * 1.0 = 1.6
+            // Combined score uses bounded vector and saturated BM25 values.
             const hash1Result = results.find(r => r.hash === 1);
-            expect(hash1Result.combinedScore).toBeGreaterThan(1.0);
+            expect(hash1Result.combinedScore).toBeCloseTo(1.0);
         });
     });
 });

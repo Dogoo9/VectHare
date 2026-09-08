@@ -614,6 +614,27 @@ function renderStageChunks(chunks, stageName, data) {
                                 <span class="meta-label">Collection</span>
                                 <span class="meta-value">${chunk.collection || chunk.collectionId}</span>
                             </div>` : ''}
+                            ${chunk.rawBackendScore !== undefined ? `
+                            <div class="vecthare-debug-meta-item">
+                                <span class="meta-label">Raw backend score</span>
+                                <span class="meta-value">${Number(chunk.rawBackendScore).toFixed(6)}</span>
+                            </div>
+                            <div class="vecthare-debug-meta-item">
+                                <span class="meta-label">Fused score / collection rank</span>
+                                <span class="meta-value">${Number(chunk.fusedScore).toFixed(6)} / #${chunk.withinCollectionRank}</span>
+                            </div>
+                            <div class="vecthare-debug-meta-item">
+                                <span class="meta-label">Retrieval / collection</span>
+                                <span class="meta-value">${escapeHtml(chunk.retrievalMethod || 'unknown')} · ${escapeHtml(chunk.collectionType || 'unknown')} (${chunk.collectionSize ?? 'size unknown'})</span>
+                            </div>
+                            <div class="vecthare-debug-meta-item">
+                                <span class="meta-label">Embedding space</span>
+                                <span class="meta-value">${escapeHtml([chunk.embedding?.provider, chunk.embedding?.modelId, chunk.embedding?.dimension, chunk.embedding?.distanceMetric, chunk.embedding?.indexVersion].filter(v => v != null).join(' · ') || 'unknown')}</span>
+                            </div>
+                            <div class="vecthare-debug-meta-item">
+                                <span class="meta-label">Sub-scores</span>
+                                <span class="meta-value">lexical=${chunk.subScores?.lexical ?? 'n/a'}, vector=${chunk.subScores?.vector ?? 'n/a'}, reranker=${chunk.subScores?.reranker ?? 'n/a'}</span>
+                            </div>` : ''}
                             ${chunk.metadata?.keywords?.length ? `
                             <div class="vecthare-debug-meta-item">
                                 <span class="meta-label">Keywords</span>

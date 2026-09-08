@@ -93,6 +93,11 @@ const defaultSettings = {
     min_chat_length: 0, // Minimum number of messages in chat before injection starts (0 = no minimum)
     // Number of top results to retrieve from vector DB (top-K)
     top_k: 3,
+    // Separate retrieval budgets. candidate_k=null enables adaptive overfetch.
+    candidate_k: null,
+    candidate_k_max: 200,
+    rerank_k: 50,
+    final_k: null, // Falls back to top_k for backwards compatibility.
     query: 2,
     chunk_size: 500, // For adaptive strategy only
     score_threshold: 0.25,
@@ -112,7 +117,7 @@ const defaultSettings = {
 
     // Hybrid Search settings (combines vector + full-text search)
     hybrid_search_enabled: false,       // Enable hybrid search mode
-    hybrid_fusion_method: 'rrf',        // 'rrf' (Reciprocal Rank Fusion) or 'weighted'
+    hybrid_fusion_method: 'heuristic_weighted', // Evaluation-selected; also 'rrf' or 'weighted'
     hybrid_vector_weight: 0.5,          // Weight for vector scores (0-1) - used in weighted mode
     hybrid_text_weight: 0.5,            // Weight for text/BM25 scores (0-1) - used in weighted mode
     hybrid_rrf_k: 60,                   // RRF constant (higher = more weight to top results)
