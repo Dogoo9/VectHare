@@ -16,10 +16,7 @@ import { getBackend } from '../backends/backend-manager.js';
 import { createBM25Scorer, tokenize } from './bm25-scorer.js';
 import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 
-import {
-    DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS, heuristicWeightedFusion,
-    reciprocalRankFusion, weightedCombination
-} from './fusion-algorithms.js';
+import { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS, heuristicWeightedFusion } from './fusion-algorithms.js';
 export { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS } from './fusion-algorithms.js';
 
 function getHeuristicSettings(settings) {
@@ -363,6 +360,8 @@ export function weightedCombination(vectorResults, textResults, alpha = 0.5, bet
             metadata: r.metadata,
             vectorScore: r.normalizedScore,
             textScore: 0,
+            normalizedVectorScore: r.normalizedScore,
+            normalizedTextScore: 0,
             combinedScore: alpha * r.normalizedScore
         });
     }
@@ -374,6 +373,7 @@ export function weightedCombination(vectorResults, textResults, alpha = 0.5, bet
         if (combined.has(r.hash)) {
             const entry = combined.get(r.hash);
             entry.textScore = r.normalizedScore;
+            entry.normalizedTextScore = r.normalizedScore;
             entry.combinedScore += beta * r.normalizedScore;
         } else {
             combined.set(r.hash, {
@@ -383,6 +383,8 @@ export function weightedCombination(vectorResults, textResults, alpha = 0.5, bet
                 metadata: r.metadata,
                 vectorScore: 0,
                 textScore: r.normalizedScore,
+                normalizedVectorScore: 0,
+                normalizedTextScore: r.normalizedScore,
                 combinedScore: beta * r.normalizedScore
             });
         }
