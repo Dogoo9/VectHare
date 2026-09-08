@@ -53,4 +53,13 @@ describe('retrieval budgets', () => {
         ];
         expect(selectFinalChunks(rankedWithMandatoryMember, 2)).toHaveLength(2);
     });
+
+    it('prioritizes authoritative keyword hits over semantic score ties', () => {
+        const candidates = [
+            { id: 'semantic', score: 1 },
+            { id: 'keyword', score: 1, keywordForceInjected: true },
+        ];
+
+        expect(selectFinalChunks(candidates, 1).map(c => c.id)).toEqual(['keyword']);
+    });
 });
