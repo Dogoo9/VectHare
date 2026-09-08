@@ -306,6 +306,8 @@ export function promoteKeywordMatches(chunks, queryText, extractedKeywords = [])
         chunk.keywordMatched = true;
         chunk.keywordForceInjected = true;
         chunk.matchedQueryKeywords = [...new Set(matchedKeywords)];
+        chunk.matchedKeywords = chunk.matchedQueryKeywords;
+        chunk.keywordBoosted = true;
         chunk.originalScore ??= oldScore;
         chunk.score = 1.0;
         matchedCount++;

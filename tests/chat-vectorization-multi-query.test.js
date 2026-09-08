@@ -109,6 +109,20 @@ describe('queryAndMergeCollections multi-query', () => {
         expect(results[0].fusedScore).toBeCloseTo(1 / 61);
     });
 
+    it('resolves both candidate budget names without aborting retrieval', async () => {
+        queryMultipleCollections.mockResolvedValue({
+            collection: { hashes: [99], metadata: [{ text: 'keyword result', score: 0.4 }] },
+        });
+
+        await expect(queryAndMergeCollections(
+            ['collection'], 'keyword', { top_k: 3, candidate_k: 23, candidate_k_max: 500 }, [],
+            { trace: [], chunkFates: {} },
+        )).resolves.toHaveLength(1);
+        expect(queryMultipleCollections).toHaveBeenCalledWith(
+            ['collection'], 'keyword', 500, 0, expect.any(Object),
+        );
+    });
+
     it('requests up to 500 Qdrant candidates when configured to pull 500 entries', async () => {
         queryMultipleCollections.mockResolvedValue({ qdrant_collection: { hashes: [], metadata: [] } });
 
