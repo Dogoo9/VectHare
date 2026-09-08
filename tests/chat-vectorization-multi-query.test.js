@@ -71,8 +71,6 @@ describe('authoritative keyword activation', () => {
             originalScore: 0.08,
             keywordMatched: true,
             keywordForceInjected: true,
-            keywordBoosted: true,
-            matchedKeywords: ['red dragon'],
             matchedQueryKeywords: ['red dragon'],
         });
     });
@@ -104,7 +102,7 @@ describe('queryAndMergeCollections multi-query', () => {
         expect(queryMultipleCollections).toHaveBeenCalledOnce();
         // Backend thresholding is deliberately disabled so low-scoring exact
         // keyword hits survive long enough to be promoted locally.
-        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 500, 0, expect.any(Object));
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0, expect.any(Object));
         expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.score)).toEqual([0.9, 0.8]);

@@ -699,12 +699,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
     // Fetch the candidate budget from each backend. `top_k`/`final_k` is the
     // final injection limit and using it here caused Qdrant to return only that
     // tiny prefix before conditions, thresholds, and fusion could run.
-    // Keep both resolved names in this scope. Some accepted/merged versions of
-    // this function still referenced `candidateK` in tracing or slicing after
-    // the full-window change, which caused retrieval to abort with
-    // "candidateK is not defined" before any injection could happen.
-    const { candidateK, candidateKMax } = resolveRetrievalBudgets(settings);
-    const keywordCandidateK = Math.max(candidateK, candidateKMax);
+    const { candidateKMax } = resolveRetrievalBudgets(settings);
 
     // PERF: Build hash-to-message Map once for O(1) lookups instead of O(n) find() per chunk
     const chatHashMap = new Map();
@@ -723,7 +718,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         resultMap = await queryMultipleCollections(
             activeCollections,
             queryText,
-            keywordCandidateK,
+            candidateK,
             // Threshold locally after keyword promotion. Applying it in the
             // backend would discard low-vector-score keyword hits before they
             // can be promoted to an authoritative 100% match.
@@ -854,7 +849,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
     // Keyword activation cannot be authoritative if the matching entry is
     // discarded in a small semantic prefix. Retain the complete configured
     // candidate window so even a low-ranked keyword hit can be promoted.
-    chunksForVisualizer = fusion.results.slice(0, keywordCandidateK);
+    chunksForVisualizer = fusion.results.slice(0, candidateKMax);
     addTrace(debugData, 'collection_fusion', 'Merged ranked collection lists', {
         method: fusion.method,
         heterogeneous: fusion.heterogeneous,
