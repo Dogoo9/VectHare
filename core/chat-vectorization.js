@@ -273,6 +273,48 @@ export function filterManuallyDisabledChunks(chunks) {
 }
 
 /**
+ * Promote exact entry-keyword matches to authoritative retrieval hits.
+ *
+ * Keyword activation is intentionally binary: once an enabled entry's keyword
+ * occurs in the query, semantic similarity must not keep that entry below the
+ * score threshold. Entry/scene/condition filtering is performed before this
+ * helper is called, so a disabled entry is never re-enabled by its keyword.
+ */
+export function promoteKeywordMatches(chunks, queryText, extractedKeywords = []) {
+    const queryLower = String(queryText || '').toLowerCase();
+    const extracted = new Set(extractedKeywords.map(keyword =>
+        (typeof keyword === 'object' ? keyword?.text : keyword)?.toLowerCase(),
+    ).filter(Boolean));
+
+    let matchedCount = 0;
+    for (const chunk of chunks) {
+        const storedKeywords = getChunkMetadata(chunk.hash)?.keywords;
+        const rawKeywords = storedKeywords ?? chunk.metadata?.keywords ?? chunk.keywords ?? [];
+        const matchedKeywords = rawKeywords
+            .filter(keyword => typeof keyword !== 'object' || keyword.enabled !== false)
+            .map(keyword => (typeof keyword === 'object' ? keyword.text : keyword)?.trim().toLowerCase())
+            .filter(Boolean)
+            .filter(keyword => {
+                if (extracted.has(keyword)) return true;
+                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(queryLower);
+            });
+
+        if (matchedKeywords.length === 0) continue;
+
+        const oldScore = chunk.score ?? 0;
+        chunk.keywordMatched = true;
+        chunk.keywordForceInjected = true;
+        chunk.matchedQueryKeywords = [...new Set(matchedKeywords)];
+        chunk.originalScore ??= oldScore;
+        chunk.score = 1.0;
+        matchedCount++;
+    }
+
+    return matchedCount;
+}
+
+/**
  * Applies chunk-level conditions to filter results
  * @param {object[]} chunks Chunks with metadata
  * @param {object[]} chat Chat messages for context
@@ -675,7 +717,10 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
             activeCollections,
             queryText,
             candidateK,
-            settings.score_threshold || 0,
+            // Threshold locally after keyword promotion. Applying it in the
+            // backend would discard low-vector-score keyword hits before they
+            // can be promoted to an authoritative 100% match.
+            0,
             settings,
         );
     } catch (error) {
@@ -746,7 +791,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
                 return {
                     hash: hash,
                     metadata: normalizedMetadata,
-                    score: meta.score || 1.0,
+                    score: meta.score ?? 1.0,
                     originalScore: meta.originalScore,
                     keywordBoost: meta.keywordBoost,
                     matchedKeywords: meta.matchedKeywords,
@@ -1064,6 +1109,15 @@ function applyTemporalDecayStage(chunks, chat, settings, threshold, debugData) {
 
     // Map decay results back to chunks and record fate
     let result = chunks.map(chunk => {
+        // A direct keyword hit is authoritative and remains a perfect match.
+        // Temporal weighting must not undo the guarantee before injection.
+        if (chunk.keywordForceInjected) {
+            recordChunkFate(debugData, chunk.hash, 'decay', 'passed', 'Keyword match bypasses temporal decay', {
+                score: 1.0,
+            });
+            return { ...chunk, score: 1.0, decayApplied: false };
+        }
+
         const decayedChunk = decayedChunksMap.get(chunk.hash);
         if (decayedChunk && (decayedChunk.decayApplied || decayedChunk.sceneAwareDecay)) {
             const decayMultiplier = decayedChunk.score / (decayedChunk.originalScore || 1);
@@ -1844,44 +1898,23 @@ export async function rearrangeChat(chat, settings, type) {
         const backendLatencyMs = performance.now() - backendStarted;
         const candidatesRetrieved = chunks.length;
 
+        // Respect explicit entry state and activation conditions before keyword
+        // promotion. A keyword can force relevance, but cannot enable an entry.
+        chunks = await applyConditionsStage(chunks, chat, settings, debugData);
+        debugData.stages.afterConditions = [...chunks];
+        debugData.stats.afterConditions = chunks.length;
+
         // === STAGE 4.3: Boost chunks with matching query keywords ===
         if (chunks.length > 0) {
-            let keywordMatchCount = 0;
-            // FIX: Match chunk keywords against BOTH auto-extracted query keywords AND
-            // the full raw query text. The extraction cap (e.g. balanced = max 8 keywords)
-            // previously silently dropped names beyond the cap, preventing their boost.
-            const queryLower = queryText.toLowerCase();
+            const keywordMatchCount = promoteKeywordMatches(chunks, queryText, queryKeywordTexts);
 
-            for (const chunk of chunks) {
-                // Get chunk keywords from metadata
-                const chunkKeywords = (chunk.metadata?.keywords || [])
-                .map(kw => (typeof kw === 'object' ? kw.text : kw)?.toLowerCase())
-                .filter(Boolean);
-
-                // Check chunk keywords against extracted list OR raw query text
-                // Word-boundary match to avoid partial hits (e.g. "mel" inside "melody")
-                const matchedKeywords = chunkKeywords.filter(ck => {
-                    if (queryKeywordTexts.includes(ck)) return true;
-                    const escaped = ck.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    return new RegExp(`(?<![\\w])${escaped}(?![\\w])`, 'i').test(queryLower);
+            for (const chunk of chunks.filter(item => item.keywordForceInjected)) {
+                addTrace(debugData, 'keyword_boost', `Chunk promoted by ${chunk.matchedQueryKeywords.length} keyword(s)`, {
+                    hash: chunk.hash,
+                    matchedKeywords: chunk.matchedQueryKeywords,
+                    newScore: 1.0,
+                    oldScore: chunk.originalScore,
                 });
-
-                if (matchedKeywords.length > 0) {
-                    // Chunk matches query keywords - boost to perfect hit
-                    const oldScore = chunk.score;
-                    chunk.keywordMatched = true;
-                    chunk.matchedQueryKeywords = matchedKeywords;
-                    chunk.score = 1.0; // 100% perfect match
-                    chunk.originalScore = oldScore;
-                    keywordMatchCount++;
-
-                    addTrace(debugData, 'keyword_boost', `Chunk boosted by ${matchedKeywords.length} keyword(s)`, {
-                        hash: chunk.hash,
-                        matchedKeywords,
-                        newScore: 1.0,
-                        oldScore
-                    });
-                }
             }
 
             if (keywordMatchCount > 0) {

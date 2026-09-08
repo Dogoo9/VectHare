@@ -34,7 +34,12 @@ vi.mock('../core/core-vector-api.js', () => ({
 }));
 
 import { extension_settings } from '../core/../../../../extensions.js';
-import { filterManuallyDisabledChunks, queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
+import {
+    filterManuallyDisabledChunks,
+    promoteKeywordMatches,
+    queryAndMergeCollections,
+    rearrangeChat,
+} from '../core/chat-vectorization.js';
 
 describe('per-entry retrieval state', () => {
     it('keeps only entries enabled in the visualizer or backend metadata', () => {
@@ -56,6 +61,31 @@ describe('per-entry retrieval state', () => {
     });
 });
 
+describe('authoritative keyword activation', () => {
+    it('promotes an exact keyword hit to a 100% score', () => {
+        const chunks = [{ hash: 10, score: 0.08, metadata: { keywords: ['Red Dragon'] } }];
+
+        expect(promoteKeywordMatches(chunks, 'I approach the red dragon carefully')).toBe(1);
+        expect(chunks[0]).toMatchObject({
+            score: 1,
+            originalScore: 0.08,
+            keywordMatched: true,
+            keywordForceInjected: true,
+            matchedQueryKeywords: ['red dragon'],
+        });
+    });
+
+    it('uses whole boundaries and ignores explicitly disabled keywords', () => {
+        const chunks = [
+            { hash: 11, score: 0.2, metadata: { keywords: ['mel'] } },
+            { hash: 12, score: 0.2, metadata: { keywords: [{ text: 'melody', enabled: false }] } },
+        ];
+
+        expect(promoteKeywordMatches(chunks, 'A melody begins')).toBe(0);
+        expect(chunks.map(chunk => chunk.score)).toEqual([0.2, 0.2]);
+    });
+});
+
 describe('queryAndMergeCollections multi-query', () => {
     beforeEach(() => queryMultipleCollections.mockReset());
 
@@ -70,7 +100,9 @@ describe('queryAndMergeCollections multi-query', () => {
         );
 
         expect(queryMultipleCollections).toHaveBeenCalledOnce();
-        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0.2, expect.any(Object));
+        // Backend thresholding is deliberately disabled so low-scoring exact
+        // keyword hits survive long enough to be promoted locally.
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0, expect.any(Object));
         expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.score)).toEqual([0.9, 0.8]);
