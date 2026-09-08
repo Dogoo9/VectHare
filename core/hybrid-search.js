@@ -14,6 +14,7 @@
 
 import { getBackend } from '../backends/backend-manager.js';
 import { createBM25Scorer, tokenize } from './bm25-scorer.js';
+import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 
 /** Default RRF constant (prevents division by zero, balances contribution) */
 export const DEFAULT_RRF_K = 60;
@@ -95,7 +96,7 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     console.log(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);
     console.log(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
 
-    let vectorResults;
+    let vectorResults = { hashes: [], metadata: [] };
     try {
         vectorResults = await backend.queryCollection(
             collectionId,
@@ -107,32 +108,24 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
     } catch (error) {
         console.error(`[HybridSearch] Vector query failed:`, error);
-        return { hashes: [], metadata: [] };
     }
 
-    if (!vectorResults || !vectorResults.metadata || vectorResults.metadata.length === 0) {
-        console.log('[HybridSearch] No vector results found');
-        console.log(`[HybridSearch] Debug - vectorResults:`, JSON.stringify(vectorResults));
-        return { hashes: [], metadata: [] };
-    }
+    if (!vectorResults?.metadata) vectorResults = { hashes: [], metadata: [] };
 
-    // 2. Convert to format for BM25 scoring (include title and tags for field boosting)
-    const resultsWithText = vectorResults.metadata.map((meta, idx) => ({
-        hash: vectorResults.hashes[idx],
-        text: meta.text || '',
-        title: meta.entryName || meta.title || '',
-        tags: meta.keywords || [],
-        score: meta.score || 0,
-        metadata: meta
-    }));
-
-    // 3. Perform BM25 full-text search over the result set with field boosting
-    console.log(`[HybridSearch] Computing BM25 scores for ${resultsWithText.length} results...`);
-    const bm25Results = performBM25Search(resultsWithText, searchText, {
+    // Lexical candidates come from the complete collection index, independently
+    // of which documents the dense ANN generator happened to return.
+    let bm25Results = searchLexicalIndex(collectionId, searchText, expandedTopK, {
         k1: settings.bm25_k1 || 1.5,
-        b: settings.bm25_b || 0.75,
-        fieldBoosting: true  // Enable title (3x) and tags (2x) boosting
+        b: settings.bm25_b || 0.75
     });
+    // Existing collections created before the index was introduced remain
+    // searchable until their next vectorization builds the complete index.
+    if (loadLexicalIndex(collectionId).documentCount === 0 && vectorResults.metadata.length) {
+        const denseDocuments = vectorResults.metadata.map((meta, idx) => ({
+            hash: vectorResults.hashes[idx], text: meta.text || '', score: meta.score || 0, metadata: meta
+        }));
+        bm25Results = performBM25Search(denseDocuments, searchText, { k1: settings.bm25_k1, b: settings.bm25_b });
+    }
 
     // 4. Fuse results
     let fusedResults;
@@ -252,7 +245,7 @@ export function reciprocalRankFusion(resultLists, k = DEFAULT_RRF_K) {
 
     // Convert to array and sort by raw RRF score
     const sortedResults = Array.from(fusedScores.values())
-        .sort((a, b) => b.rawRrfScore - a.rawRrfScore);
+        .sort((a, b) => b.rawRrfScore - a.rawRrfScore || compareHashes(a.result.hash, b.result.hash));
 
     // RRF determines ORDER, but display scores should reflect actual similarity
     // This ensures chunks with high semantic match show high %, while chunks that
@@ -304,7 +297,7 @@ export function reciprocalRankFusion(resultLists, k = DEFAULT_RRF_K) {
         }
 
         // Re-sort by final score (may differ slightly from raw RRF order)
-        sortedResults.sort((a, b) => b.rrfScore - a.rrfScore);
+        sortedResults.sort((a, b) => b.rrfScore - a.rrfScore || compareHashes(a.result.hash, b.result.hash));
     }
 
     return sortedResults;
@@ -367,7 +360,11 @@ export function weightedCombination(vectorResults, textResults, alpha = 0.5, bet
 
     // Sort by combined score (descending)
     return Array.from(combined.values())
-        .sort((a, b) => b.combinedScore - a.combinedScore);
+        .sort((a, b) => b.combinedScore - a.combinedScore || compareHashes(a.hash, b.hash));
+}
+
+function compareHashes(a, b) {
+    return String(a).localeCompare(String(b));
 }
 
 /**
