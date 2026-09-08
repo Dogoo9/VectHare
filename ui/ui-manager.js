@@ -1639,9 +1639,13 @@ function bindSettingsEvents(settings, callbacks) {
                 const { hasVectors, allMatches } = await doesChatHaveVectors(settings);
 
                 if (!hasVectors) {
-                    // No vectors found anywhere - open vectorizer panel
-                    $checkbox.prop('checked', false);
-                    toastr.info('Set up your chat vectorization first');
+                    // Preserve the user's choice while they create the initial
+                    // index. Previously this branch reset the checkbox and
+                    // never enabled auto-sync after opening the vectorizer, so
+                    // future chat messages were silently left out.
+                    setCollectionAutoSync(collectionId, true);
+                    $checkbox.prop('checked', true);
+                    toastr.info('Set up the initial chat index. Auto-sync will keep it updated afterward.');
                     openContentVectorizer('chat');
                     return;
                 }

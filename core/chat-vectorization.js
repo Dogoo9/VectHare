@@ -387,9 +387,11 @@ async function rerankWithBananaBread(query, chunks, settings) {
  *
  * @param {object} settings VectHare settings
  * @param {number} batchSize Number of messages to process per call
+ * @param {boolean} bypassAutoSync Allow an explicit/manual vectorization to run
+ * even when automatic synchronization is disabled
  * @returns {Promise<object>} Progress info
  */
-export async function synchronizeChat(settings, batchSize = 5) {
+export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = false) {
     // Build proper collection ID using chat UUID first
     const collectionId = getChatCollectionId();
     console.log(`🔍 VectHare DEBUG: getChatCollectionId() returned: "${collectionId}"`);
@@ -401,7 +403,7 @@ export async function synchronizeChat(settings, batchSize = 5) {
 
     // Check per-collection autoSync setting instead of global enabled_chats
     const { isCollectionAutoSyncEnabled } = await import('./collection-metadata.js');
-    if (!isCollectionAutoSyncEnabled(collectionId)) {
+    if (!bypassAutoSync && !isCollectionAutoSyncEnabled(collectionId)) {
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
 
@@ -2016,10 +2018,6 @@ export async function rearrangeChat(chat, settings, type) {
  */
 export async function vectorizeAll(settings, batchSize) {
     try {
-        if (!settings.enabled_chats) {
-            return;
-        }
-
         const chatId = getCurrentChatId();
         if (!chatId) {
             toastr.info('No chat selected', 'Vectorization aborted');
@@ -2057,7 +2055,10 @@ export async function vectorizeAll(settings, batchSize) {
                 throw new Error('Message generation in progress');
             }
 
-            const result = await synchronizeChat(settings, batchSize);
+            // This is an explicit user action. It must work independently of
+            // the per-chat auto-sync toggle; auto-sync only controls event-
+            // driven updates after the initial history has been indexed.
+            const result = await synchronizeChat(settings, batchSize, true);
 
             // Handle disabled/blocked state
             if (result.remaining === -1) {

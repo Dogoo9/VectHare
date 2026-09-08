@@ -22,6 +22,8 @@ import {
     getChatCollectionPolicy,
     applyChatCollectionPolicy,
     filterActiveCollections,
+    getCollectionMeta,
+    setCollectionAutoSync,
 } from '../core/collection-metadata.js';
 
 describe('collection metadata activation policies', () => {
@@ -110,6 +112,34 @@ describe('collection metadata activation policies', () => {
         );
 
         expect(active).toEqual(['lorebook_exclusive', 'document_other']);
+    });
+});
+
+describe('chat collection auto-sync state', () => {
+    beforeEach(() => {
+        extension_settings.vecthare = { collections: {}, chatCollectionPolicies: {} };
+    });
+
+    it('enables retrieval when auto-sync is enabled', () => {
+        setCollectionMeta('vecthare_chat_test', { enabled: false });
+
+        setCollectionAutoSync('vecthare_chat_test', true);
+
+        expect(getCollectionMeta('vecthare_chat_test')).toMatchObject({
+            autoSync: true,
+            enabled: true,
+        });
+    });
+
+    it('does not disable retrieval when auto-sync is turned off', () => {
+        setCollectionMeta('vecthare_chat_test', { enabled: true, autoSync: true });
+
+        setCollectionAutoSync('vecthare_chat_test', false);
+
+        expect(getCollectionMeta('vecthare_chat_test')).toMatchObject({
+            autoSync: false,
+            enabled: true,
+        });
     });
 });
 
