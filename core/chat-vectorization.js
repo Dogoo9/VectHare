@@ -627,6 +627,7 @@ function buildSearchQuery(chat, settings) {
 export async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
     const totalStart = performance.now();
     let chunksForVisualizer = [];
+    const collectionResultLists = [];
     const effectiveTopK = settings.top_k ?? settings.insert;
 
     // PERF: Build hash-to-message Map once for O(1) lookups instead of O(n) find() per chunk
@@ -771,9 +772,19 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
       requestK = nextCandidateK(requestK, candidateKMax);
     }
 
-    // Sort merged results by score (descending) and limit to topK
-    chunksForVisualizer.sort((a, b) => b.score - a.score);
-    chunksForVisualizer = chunksForVisualizer.slice(0, effectiveTopK);
+    // Never compare raw scores across collections. Each backend list is already
+    // ranked, so weighted RRF provides stable fusion without per-query min/max.
+    const fusion = fuseCollectionResults(collectionResultLists, {
+        rrfK: settings.collection_rrf_k,
+        sourcePriorities: settings.collection_source_priorities,
+    });
+    chunksForVisualizer = fusion.results.slice(0, effectiveTopK);
+    addTrace(debugData, 'collection_fusion', 'Merged ranked collection lists', {
+        method: fusion.method,
+        heterogeneous: fusion.heterogeneous,
+        embeddingSpaces: fusion.embeddingSpaces,
+        hasUnknownEmbeddingSpace: fusion.hasUnknownEmbeddingSpace,
+    });
 
     const normalizationMs = performance.now() - normalizationStart;
     const timings = {

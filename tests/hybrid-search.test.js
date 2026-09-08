@@ -335,9 +335,9 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         // Hash 1 has max scores in both, normalized to 1.0 each
-        // combinedScore should be close to 1.0 (0.5 * 1.0 + 0.5 * 1.0)
+        // Vector scores are bounded directly and BM25 uses a fixed saturation curve.
         const hash1Result = results.find(r => r.hash === 1);
-        expect(hash1Result.combinedScore).toBeCloseTo(1.0, 1);
+        expect(hash1Result.combinedScore).toBeCloseTo(0.625, 3);
     });
 
     it('should respect custom alpha/beta weights', () => {
@@ -431,7 +431,7 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         const hash1Entry = results.find(r => r.hash === 1);
-        expect(hash1Entry.vectorScore).toBe(1.0); // Normalized max in vector list
+        expect(hash1Entry.vectorScore).toBe(0.8); // Query-independent bounded value
         expect(hash1Entry.textScore).toBe(0); // Not in text list
     });
 
@@ -450,7 +450,7 @@ describe('weightedCombination', () => {
 
         const hash2Entry = results.find(r => r.hash === 2);
         expect(hash2Entry.vectorScore).toBe(0); // Not in vector list
-        expect(hash2Entry.textScore).toBe(1.0); // Normalized max in text list
+        expect(hash2Entry.textScore).toBeCloseTo(0.625); // Fixed BM25 saturation
     });
 
     it('should skip results with undefined/null hash', () => {
@@ -489,9 +489,8 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         expect(results).toHaveLength(1);
-        // With single results, min-max normalization produces 0 for each
-        // because (score - min) / range = 0 when there's only one value
-        expect(results[0].combinedScore).toBe(0);
+        // A single-result batch retains meaningful, query-independent scores.
+        expect(results[0].combinedScore).toBeCloseTo(0.7125);
     });
 
     it('should handle all same scores correctly', () => {
@@ -969,9 +968,9 @@ describe('Edge Cases', () => {
             const results = weightedCombination(vectorResults, textResults, 0.8, 0.8);
 
             // Hash 1 has normalized scores of 1.0 each
-            // Combined score = 0.8 * 1.0 + 0.8 * 1.0 = 1.6
+            // Combined score uses bounded vector and saturated BM25 values.
             const hash1Result = results.find(r => r.hash === 1);
-            expect(hash1Result.combinedScore).toBeGreaterThan(1.0);
+            expect(hash1Result.combinedScore).toBeCloseTo(1.0);
         });
     });
 });
