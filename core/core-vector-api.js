@@ -861,7 +861,11 @@ export async function queryCollection(collectionId, searchText, topK, settings) 
 
     // Standard vector search flow
     // Overfetch to allow keyword-boosted chunks to surface
-    const overfetchAmount = getOverfetchAmount(topK);
+    // Never shrink an explicit candidate request. getOverfetchAmount() is
+    // capped for ordinary top-K searches, which previously turned a request
+    // for 500 candidates into only 100 and made lower-ranked keyword entries
+    // impossible to discover.
+    const overfetchAmount = Math.max(topK, getOverfetchAmount(topK));
     // VEC-18: Track query latency for health dashboard
     const queryStart = Date.now();
     let rawResults;
@@ -1021,8 +1025,9 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     }
 
     // Standard vector search flow
-    // Get raw results from backend (with overfetch for each collection)
-    const overfetchAmount = getOverfetchAmount(topK);
+    // Get raw results from backend (with overfetch for each collection). Do not
+    // let the generic 100-result overfetch cap shrink the candidate window.
+    const overfetchAmount = Math.max(topK, getOverfetchAmount(topK));
     // VEC-18: Track query latency for health dashboard
     const queryStart = Date.now();
     const backendStart = performance.now();

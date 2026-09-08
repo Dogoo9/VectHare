@@ -33,4 +33,12 @@ describe('core multi-collection query embedding', () => {
         expect(mocks.backendQuery).toHaveBeenCalledOnce();
         expect(mocks.backendQuery.mock.calls[0][5]).toEqual([0.1, 0.2]);
     });
+
+    it('does not shrink a large candidate request to the generic overfetch cap', async () => {
+        mocks.backendQuery.mockClear();
+
+        await queryMultipleCollections(['one'], 'needle', 500, 0, { source: 'openai' });
+
+        expect(mocks.backendQuery.mock.calls[0][2]).toBe(500);
+    });
 });
