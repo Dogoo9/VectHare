@@ -1907,6 +1907,7 @@ export async function rearrangeChat(chat, settings, type) {
         // === STAGE 8.7: Expensive reranking ===
         // Group/link boosts participate in candidate selection, while only the
         // explicitly budgeted prefix is sent to the external reranker.
+        let rerankerLatencyMs = 0;
         if (settings.source === 'bananabread' && settings.bananabread_rerank && chunks.length > 0) {
             chunks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
             const rerankCandidates = chunks.slice(0, rerankK);
@@ -1915,7 +1916,9 @@ export async function rearrangeChat(chat, settings, type) {
                 rerankK: rerankCandidates.length,
                 query: queryText.substring(0, 100)
             });
+            const rerankerStarted = performance.now();
             const reranked = await rerankWithBananaBread(queryText, rerankCandidates, settings);
+            rerankerLatencyMs = performance.now() - rerankerStarted;
             chunks = [...reranked, ...chunks.slice(rerankK)];
             debugData.stages.afterRerank = [...chunks];
             addTrace(debugData, 'rerank', 'Reranking complete', { rerankedCount: reranked.length });
@@ -1996,8 +1999,8 @@ export async function rearrangeChat(chat, settings, type) {
             verified: injection.verified
         });
 
-        setLastSearchDebug(debugData);
         debugData.timings = { totalLatencyMs: performance.now() - retrievalStarted, embeddingLatencyMs: 0, backendLatencyMs, rerankerLatencyMs };
+        setLastSearchDebug(debugData);
         logger.info('Retrieval complete', { ...debugData.timings, collectionsSearched: activeCollections.length, candidatesRetrieved, candidatesInjected: chunksToInject.length, finalCharacterCount: injection.text.length });
 
     } catch (error) {
