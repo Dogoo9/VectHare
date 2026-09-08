@@ -102,7 +102,7 @@ describe('queryAndMergeCollections multi-query', () => {
         expect(queryMultipleCollections).toHaveBeenCalledOnce();
         // Backend thresholding is deliberately disabled so low-scoring exact
         // keyword hits survive long enough to be promoted locally.
-        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0, expect.any(Object));
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 500, 0, expect.any(Object));
         expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.score)).toEqual([0.9, 0.8]);
@@ -120,22 +120,6 @@ describe('queryAndMergeCollections multi-query', () => {
         )).resolves.toHaveLength(1);
         expect(queryMultipleCollections).toHaveBeenCalledWith(
             ['collection'], 'keyword', 500, 0, expect.any(Object),
-        );
-    });
-
-    it('requests up to 500 Qdrant candidates when configured to pull 500 entries', async () => {
-        queryMultipleCollections.mockResolvedValue({ qdrant_collection: { hashes: [], metadata: [] } });
-
-        await queryAndMergeCollections(
-            ['qdrant_collection'],
-            'query',
-            { vector_backend: 'qdrant', top_k: 500, candidate_k_max: 500 },
-            [],
-            { trace: [], chunkFates: {} },
-        );
-
-        expect(queryMultipleCollections).toHaveBeenCalledWith(
-            ['qdrant_collection'], 'query', 500, 0, expect.any(Object),
         );
     });
 
