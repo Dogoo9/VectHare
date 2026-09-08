@@ -93,6 +93,22 @@ describe('queryAndMergeCollections multi-query', () => {
         );
     });
 
+    it('requests up to 500 Qdrant candidates when configured to pull 500 entries', async () => {
+        queryMultipleCollections.mockResolvedValue({ qdrant_collection: { hashes: [], metadata: [] } });
+
+        await queryAndMergeCollections(
+            ['qdrant_collection'],
+            'query',
+            { vector_backend: 'qdrant', top_k: 500, candidate_k_max: 500 },
+            [],
+            { trace: [], chunkFates: {} },
+        );
+
+        expect(queryMultipleCollections).toHaveBeenCalledWith(
+            ['qdrant_collection'], 'query', 500, 0, expect.any(Object),
+        );
+    });
+
     it('keeps successful collections when another collection fails', async () => {
         queryMultipleCollections.mockResolvedValue({
             good: { hashes: [7], metadata: [{ text: 'kept', score: 0.7 }] },
