@@ -21,6 +21,7 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
 import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
+import AsyncUtils from '../utils/async-utils.js';
 
 const BACKEND_TYPE = 'milvus';
 
@@ -306,10 +307,11 @@ export class MilvusBackend extends VectorBackend {
         return { hashes, metadata };
     }
 
-    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings, queryVector = null) {
         const results = {};
 
-        for (const collectionId of collectionIds) {
+        const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
+        await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
             try {
                 const { type, sourceId } = this._parseCollectionId(collectionId);
 
@@ -324,6 +326,7 @@ export class MilvusBackend extends VectorBackend {
                         threshold: threshold,
                         source: settings.source || 'transformers',
                         model: getModelFromSettings(settings),
+                        ...(queryVector ? { queryVector } : {}),
                         filters: { type, sourceId },
                     }),
                 });
@@ -349,7 +352,7 @@ export class MilvusBackend extends VectorBackend {
                 console.error(`Failed to query collection ${collectionId}:`, error);
                 results[collectionId] = { hashes: [], metadata: [] };
             }
-        }
+        }), concurrency);
 
         return results;
     }
