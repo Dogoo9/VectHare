@@ -323,9 +323,10 @@ export function reciprocalRankFusion(resultLists, k = DEFAULT_RRF_K) {
  * @returns {Array} Combined and sorted results
  */
 export function weightedCombination(vectorResults, textResults, alpha = 0.5, beta = 0.5) {
-    // Normalize scores to [0, 1]
-    const normalizedVector = normalizeScores(vectorResults, 'score');
-    const normalizedText = normalizeScores(textResults, 'bm25Score');
+    // Use query-independent transforms. Per-query min/max normalization makes
+    // scores unstable and exaggerates narrow result distributions.
+    const normalizedVector = normalizeScores(vectorResults, 'score', 'bounded');
+    const normalizedText = normalizeScores(textResults, 'bm25Score', 'saturating');
 
     const combined = new Map();
 
@@ -377,17 +378,14 @@ export function weightedCombination(vectorResults, textResults, alpha = 0.5, bet
  * @param {string} scoreField - Field name containing the score
  * @returns {Array} Results with added normalizedScore field
  */
-function normalizeScores(results, scoreField = 'score') {
+function normalizeScores(results, scoreField = 'score', method = 'bounded') {
     if (!results || results.length === 0) return [];
-
-    const scores = results.map(r => r[scoreField] || 0);
-    const minScore = Math.min(...scores);
-    const maxScore = Math.max(...scores);
-    const range = maxScore - minScore || 1; // Avoid division by zero
 
     return results.map(r => ({
         ...r,
-        normalizedScore: ((r[scoreField] || 0) - minScore) / range
+        normalizedScore: method === 'saturating'
+            ? Math.max(0, Number(r[scoreField]) || 0) / (Math.max(0, Number(r[scoreField]) || 0) + 3)
+            : Math.max(0, Math.min(1, Number(r[scoreField]) || 0))
     }));
 }
 

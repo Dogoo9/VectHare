@@ -41,6 +41,7 @@ import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '
 import { Queue, LRUCache } from '../utils/data-structures.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
+import { fuseCollectionResults } from './collection-fusion.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -625,6 +626,7 @@ function buildSearchQuery(chat, settings) {
  */
 async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
     let chunksForVisualizer = [];
+    const collectionResultLists = [];
     const effectiveTopK = settings.top_k ?? settings.insert;
 
     // PERF: Build hash-to-message Map once for O(1) lookups instead of O(n) find() per chunk
@@ -710,7 +712,18 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
                 };
             });
 
-            chunksForVisualizer.push(...collectionChunks);
+            const collectionMeta = getCollectionMeta(collectionId);
+            collectionResultLists.push({
+                collectionId,
+                results: collectionChunks,
+                weight: collectionMeta.fusionWeight ?? 1,
+                sourcePriority: collectionMeta.sourcePriority,
+                collectionSize: collectionMeta.collectionSize ?? queryResults.collectionSize ?? null,
+                collectionType: collectionMeta.collectionType !== 'unknown'
+                    ? collectionMeta.collectionType
+                    : (collectionMeta.scope || 'unknown'),
+                embedding: collectionMeta.embedding,
+            });
         } catch (error) {
             console.warn(`VectHare: Failed to query collection ${collectionId}:`, error.message);
             addTrace(debugData, 'vector_search', `Query failed for ${collectionId}`, {
@@ -719,9 +732,19 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
         }
     }
 
-    // Sort merged results by score (descending) and limit to topK
-    chunksForVisualizer.sort((a, b) => b.score - a.score);
-    chunksForVisualizer = chunksForVisualizer.slice(0, effectiveTopK);
+    // Never compare raw scores across collections. Each backend list is already
+    // ranked, so weighted RRF provides stable fusion without per-query min/max.
+    const fusion = fuseCollectionResults(collectionResultLists, {
+        rrfK: settings.collection_rrf_k,
+        sourcePriorities: settings.collection_source_priorities,
+    });
+    chunksForVisualizer = fusion.results.slice(0, effectiveTopK);
+    addTrace(debugData, 'collection_fusion', 'Merged ranked collection lists', {
+        method: fusion.method,
+        heterogeneous: fusion.heterogeneous,
+        embeddingSpaces: fusion.embeddingSpaces,
+        hasUnknownEmbeddingSpace: fusion.hasUnknownEmbeddingSpace,
+    });
 
     return chunksForVisualizer;
 }
