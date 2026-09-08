@@ -513,9 +513,9 @@ export function renderSettings(containerId, settings, callbacks) {
                             <small class="vecthare_hint">Recent messages to check for duplicates (0 = check all, lower = allow older content to resurface)</small>
 
                             <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Top K</small></label>
-                                <input id="vecthare_topk" type="number" class="vecthare-input" min="1" style="width:90px;" />
-                                <small class="vecthare_hint" style="margin-left:8px;">Number of results to retrieve per collection</small>
+                                <label for="vecthare_topk" style="margin:0; white-space:nowrap;"><small>Entries to Pull: <span id="vecthare_topk_value">3</span></small></label>
+                                <input id="vecthare_topk" type="range" class="vecthare-slider" min="1" max="500" step="1" />
+                                <small class="vecthare_hint" style="margin-left:8px;">Final number of entries to inject; Qdrant fetches a larger candidate pool before filtering</small>
                             </div>
 
                             <label style="margin-top: 16px;">
@@ -2094,11 +2094,13 @@ function bindSettingsEvents(settings, callbacks) {
         .val((settings.top_k ?? settings.insert) || 3)
         .on('input', function() {
             const value = parseInt($(this).val());
-            const safeValue = isNaN(value) ? (settings.insert || 3) : value;
+            const safeValue = isNaN(value) ? (settings.insert || 3) : Math.max(1, Math.min(500, value));
+            $('#vecthare_topk_value').text(safeValue);
             settings.top_k = safeValue;
             applySettingsSnapshot(settings);
             saveSettingsDebounced();
         });
+    $('#vecthare_topk_value').text((settings.top_k ?? settings.insert) || 3);
 
     // World Info Integration settings
     $('#vecthare_enabled_world_info')

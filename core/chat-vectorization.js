@@ -632,7 +632,10 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
     const totalStart = performance.now();
     let chunksForVisualizer = [];
     const collectionResultLists = [];
-    const effectiveTopK = settings.top_k ?? settings.insert;
+    // Fetch the candidate budget from each backend. `top_k`/`final_k` is the
+    // final injection limit and using it here caused Qdrant to return only that
+    // tiny prefix before conditions, thresholds, and fusion could run.
+    const { candidateK } = resolveRetrievalBudgets(settings);
 
     // PERF: Build hash-to-message Map once for O(1) lookups instead of O(n) find() per chunk
     const chatHashMap = new Map();
@@ -651,7 +654,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         resultMap = await queryMultipleCollections(
             activeCollections,
             queryText,
-            effectiveTopK,
+            candidateK,
             settings.score_threshold || 0,
             settings,
         );
@@ -776,7 +779,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         rrfK: settings.collection_rrf_k,
         sourcePriorities: settings.collection_source_priorities,
     });
-    chunksForVisualizer = fusion.results.slice(0, effectiveTopK);
+    chunksForVisualizer = fusion.results.slice(0, candidateK);
     addTrace(debugData, 'collection_fusion', 'Merged ranked collection lists', {
         method: fusion.method,
         heterogeneous: fusion.heterogeneous,
