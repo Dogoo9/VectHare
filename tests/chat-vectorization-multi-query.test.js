@@ -1,0 +1,74 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../backends/backend-manager.js', () => ({ isBackendAvailable: vi.fn(() => true) }));
+
+const { queryMultipleCollections } = vi.hoisted(() => ({ queryMultipleCollections: vi.fn() }));
+
+vi.mock('../core/../../../../../script.js', () => ({
+    getCurrentChatId: vi.fn(), is_send_press: false, setExtensionPrompt: vi.fn(),
+    substituteParams: value => value, chat_metadata: {}, extension_prompts: {},
+    getRequestHeaders: vi.fn(() => ({})),
+}));
+vi.mock('../core/../../../../extensions.js', () => ({ getContext: vi.fn(() => ({})) }));
+vi.mock('../core/../../../../utils.js', () => ({
+    getStringHash: value => [...String(value)].reduce((sum, char) => sum + char.charCodeAt(0), 0),
+    waitUntilCondition: vi.fn(), onlyUnique: vi.fn(),
+}));
+
+vi.mock('../core/core-vector-api.js', () => ({
+    getSavedHashes: vi.fn(),
+    insertVectorItems: vi.fn(),
+    queryMultipleCollections,
+    queryActiveCollections: vi.fn(),
+    deleteVectorItems: vi.fn(),
+    purgeVectorIndex: vi.fn(),
+}));
+
+import { queryAndMergeCollections } from '../core/chat-vectorization.js';
+
+describe('queryAndMergeCollections multi-query', () => {
+    beforeEach(() => queryMultipleCollections.mockReset());
+
+    it('uses one multi-collection call and retains source collection metadata', async () => {
+        queryMultipleCollections.mockResolvedValue({
+            first: { hashes: [1], metadata: [{ text: 'one', score: 0.9 }] },
+            second: { hashes: [2], metadata: [{ text: 'two', score: 0.8 }] },
+        });
+
+        const results = await queryAndMergeCollections(
+            ['first', 'second'], 'query', { top_k: 5, score_threshold: 0.2 }, [], { trace: [], chunkFates: {} },
+        );
+
+        expect(queryMultipleCollections).toHaveBeenCalledOnce();
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 5, 0.2, expect.any(Object));
+        expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
+        expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
+    });
+
+    it('keeps successful collections when another collection fails', async () => {
+        queryMultipleCollections.mockResolvedValue({
+            good: { hashes: [7], metadata: [{ text: 'kept', score: 0.7 }] },
+            bad: { hashes: [], metadata: [], error: 'backend unavailable' },
+        });
+
+        const results = await queryAndMergeCollections(
+            ['good', 'bad'], 'query', { top_k: 5 }, [], { trace: [], chunkFates: {} },
+        );
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({ hash: 7, text: 'kept', collectionId: 'good' });
+    });
+
+    it('falls back to chat text while retaining normalized metadata', async () => {
+        // The test stub hashes strings by their content; use the corresponding value.
+        const chat = [{ mes: 'remember me' }];
+        queryMultipleCollections.mockResolvedValue({
+            chat: { hashes: [1059], metadata: [{ score: 0.6, messageId: 3 }] },
+        });
+        const results = await queryAndMergeCollections(
+            ['chat'], 'query', { top_k: 5 }, chat, { trace: [], chunkFates: {} },
+        );
+        expect(results[0]?.metadata.messageId).toBe(3);
+        expect(results[0]?.collectionId).toBe('chat');
+    });
+});
