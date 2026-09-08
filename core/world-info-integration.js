@@ -92,7 +92,13 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
     // Lower threshold for hybrid search since RRF fusion produces lower absolute scores
     const baseThreshold = settings.world_info_threshold || 0.3;
     const threshold = settings.hybrid_search_enabled ? baseThreshold * 0.8 : baseThreshold;
-    const topK = settings.world_info_top_k || 3;
+    const configuredTopK = settings.world_info_top_k || 3;
+    // "Enabled for all entries" must widen the actual backend query, not just
+    // bypass de-duplication after Qdrant has already returned a tiny top-K.
+    // The global maximum remains the final hard cap below.
+    const topK = settings.world_info_enabled_for_all
+        ? Math.max(configuredTopK, settings.world_info_max_entries ?? 10)
+        : configuredTopK;
 
     // Build search context for activation filter evaluation
     const context = getContext();
