@@ -49,9 +49,27 @@ describe('queryAndMergeCollections multi-query', () => {
         );
 
         expect(queryMultipleCollections).toHaveBeenCalledOnce();
-        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 5, 0.2, expect.any(Object));
+        expect(queryMultipleCollections).toHaveBeenCalledWith(['first', 'second'], 'query', 25, 0.2, expect.any(Object));
         expect(results.map(result => result.collectionId)).toEqual(['first', 'second']);
         expect(results.map(result => result.metadata.collectionId)).toEqual(['first', 'second']);
+        expect(results.map(result => result.score)).toEqual([0.9, 0.8]);
+        expect(results[0].fusedScore).toBeCloseTo(1 / 61);
+    });
+
+    it('requests up to 500 Qdrant candidates when configured to pull 500 entries', async () => {
+        queryMultipleCollections.mockResolvedValue({ qdrant_collection: { hashes: [], metadata: [] } });
+
+        await queryAndMergeCollections(
+            ['qdrant_collection'],
+            'query',
+            { vector_backend: 'qdrant', top_k: 500, candidate_k_max: 500 },
+            [],
+            { trace: [], chunkFates: {} },
+        );
+
+        expect(queryMultipleCollections).toHaveBeenCalledWith(
+            ['qdrant_collection'], 'query', 500, 0, expect.any(Object),
+        );
     });
 
     it('keeps successful collections when another collection fails', async () => {

@@ -95,7 +95,7 @@ const defaultSettings = {
     top_k: 3,
     // Separate retrieval budgets. candidate_k=null enables adaptive overfetch.
     candidate_k: null,
-    candidate_k_max: 200,
+    candidate_k_max: 500,
     rerank_k: 50,
     final_k: null, // Falls back to top_k for backwards compatibility.
     query: 2,

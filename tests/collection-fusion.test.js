@@ -23,6 +23,7 @@ describe('cross-collection fusion', () => {
         expect(fusion.heterogeneous).toBe(true);
         expect(fusion.results.map(result => result.hash)).toEqual(['b', 'a', 'c']);
         expect(fusion.results[0]).toMatchObject({
+            score: 0.2,
             rawBackendScore: 0.2,
             withinCollectionRank: 1,
             retrievalMethod: 'vector',
@@ -32,6 +33,17 @@ describe('cross-collection fusion', () => {
         });
         expect(fusion.results[0].fusedScore).toBeCloseTo(2 / 61);
         expect(fusion.results[2].subScores.lexical).toBe(3);
+    });
+
+    it('does not expose an RRF contribution as the Qdrant match percentage', () => {
+        const [result] = fuseCollectionResults([
+            { collectionId: 'qdrant', collectionType: 'external_document', embedding,
+                results: [{ hash: 'exact', score: 1, keywordBoosted: true }] },
+        ]).results;
+
+        expect(result.score).toBe(1);
+        expect(result.rawBackendScore).toBe(1);
+        expect(result.fusedScore).toBeCloseTo(1 / 61);
     });
 
     it('uses deterministic tie breakers ending in stable chunk id', () => {

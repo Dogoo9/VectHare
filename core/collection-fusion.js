@@ -59,9 +59,14 @@ function preserveResult(result, collection, rank, fusedScore, contribution, prio
     };
     const rawBackendScore = result.rawBackendScore ?? metadata.rawBackendScore
         ?? metadata.originalScore ?? result.originalScore ?? result.score;
+    const relevanceScore = result.score ?? metadata.score ?? rawBackendScore;
     return {
         ...result,
-        score: fusedScore,
+        // RRF's ~0.016 top-rank contribution is a ranking signal, not a 1.6%
+        // semantic match. Keep it separately and expose the backend relevance
+        // as `score` so thresholds, keyword hits, decay, and the UI operate in
+        // the same 0..1 score space returned by Qdrant.
+        score: relevanceScore,
         fusedScore,
         rawBackendScore,
         withinCollectionRank: rank,
