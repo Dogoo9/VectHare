@@ -19,7 +19,12 @@ export function nextCandidateK(current, maximum) {
 
 /** Sort and enforce the output budget only after every ranking stage has run. */
 export function selectFinalChunks(chunks, finalK) {
-    return [...chunks].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, finalK);
+    return [...chunks].sort((a, b) => {
+        // Exact keyword activations are authoritative. Put them ahead of
+        // semantic 100% ties so backend ordering cannot cost them a slot.
+        const keywordPriority = Number(Boolean(b.keywordForceInjected)) - Number(Boolean(a.keywordForceInjected));
+        return keywordPriority || (b.score ?? 0) - (a.score ?? 0);
+    }).slice(0, finalK);
 }
 
 /**
