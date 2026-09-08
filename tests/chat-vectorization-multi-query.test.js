@@ -33,7 +33,28 @@ vi.mock('../core/core-vector-api.js', () => ({
     purgeVectorIndex: vi.fn(),
 }));
 
-import { queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
+import { extension_settings } from '../core/../../../../extensions.js';
+import { filterManuallyDisabledChunks, queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
+
+describe('per-entry retrieval state', () => {
+    it('keeps only entries enabled in the visualizer or backend metadata', () => {
+        const vecthare = extension_settings.vecthare;
+        vecthare.vecthare_chunk_meta_2 = { enabled: false };
+        vecthare.vecthare_chunk_meta_3 = { disabled: true };
+
+        const filtered = filterManuallyDisabledChunks([
+            { hash: 1, metadata: {} },
+            { hash: 2, metadata: {} },
+            { hash: 3, metadata: {} },
+            { hash: 4, metadata: { enabled: false } },
+            { hash: 5, metadata: { disabled: true } },
+        ]);
+
+        expect(filtered.map(chunk => chunk.hash)).toEqual([1]);
+        delete vecthare.vecthare_chunk_meta_2;
+        delete vecthare.vecthare_chunk_meta_3;
+    });
+});
 
 describe('queryAndMergeCollections multi-query', () => {
     beforeEach(() => queryMultipleCollections.mockReset());

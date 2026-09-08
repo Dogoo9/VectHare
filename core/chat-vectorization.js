@@ -257,6 +257,22 @@ function filterSceneDisabledChunks(chunks) {
 }
 
 /**
+ * Remove chunks explicitly disabled in the Chunk Visualizer or in backend
+ * metadata. Collection enablement controls whether a collection is queried;
+ * it must not override the per-entry switches inside that collection.
+ */
+export function filterManuallyDisabledChunks(chunks) {
+    return chunks.filter(chunk => {
+        const stored = getChunkMetadata(chunk.hash);
+        const backend = chunk.metadata || {};
+        return stored?.enabled !== false
+            && stored?.disabled !== true
+            && backend.enabled !== false
+            && backend.disabled !== true;
+    });
+}
+
+/**
  * Applies chunk-level conditions to filter results
  * @param {object[]} chunks Chunks with metadata
  * @param {object[]} chat Chat messages for context
@@ -264,8 +280,12 @@ function filterSceneDisabledChunks(chunks) {
  * @returns {Promise<object[]>} Filtered chunks
  */
 async function applyChunkConditions(chunks, chat, settings, trackActivations = true) {
-    // First filter out chunks disabled by scenes
-    let filtered = filterSceneDisabledChunks(chunks);
+    // First honor explicit per-entry state, then filter chunks disabled by scenes.
+    // Previously the visualizer persisted enabled=false correctly, but this
+    // retrieval path never read it, so widening Qdrant retrieval activated
+    // nearly every entry in a collection.
+    let filtered = filterManuallyDisabledChunks(chunks);
+    filtered = filterSceneDisabledChunks(filtered);
 
     // Check if any chunks have conditions (from chunk metadata)
     const chunksWithConditions = filtered.map(chunk => {
