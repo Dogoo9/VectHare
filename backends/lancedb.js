@@ -17,6 +17,7 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
 import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
+import AsyncUtils from '../utils/async-utils.js';
 
 const BACKEND_TYPE = 'lancedb';
 
@@ -210,11 +211,12 @@ export class LanceDBBackend extends VectorBackend {
         return { hashes, metadata };
     }
 
-    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings, queryVector = null) {
         // Query each collection separately
         const results = {};
 
-        for (const collectionId of collectionIds) {
+        const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
+        await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
             const actualCollectionId = this._stripRegistryPrefix(collectionId);
             try {
                 const response = await fetch('/api/plugins/similharity/chunks/query', {
@@ -227,7 +229,8 @@ export class LanceDBBackend extends VectorBackend {
                         topK: topK,
                         threshold: threshold,
                         source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
+                        model: getModelFromSettings(settings),
+                        ...(queryVector ? { queryVector } : {}),
                     }),
                 });
 
@@ -252,7 +255,7 @@ export class LanceDBBackend extends VectorBackend {
                 console.error(`Failed to query collection ${collectionId}:`, error);
                 results[collectionId] = { hashes: [], metadata: [] };
             }
-        }
+        }), concurrency);
 
         return results;
     }

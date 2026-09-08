@@ -411,6 +411,26 @@ describe('StandardBackend', () => {
             expect(result.col1).toBeDefined();
             expect(result.col2).toBeDefined();
         });
+
+        it('limits concurrency while falling back to individual queries', async () => {
+            let active = 0;
+            let maximumActive = 0;
+            fetchMock.mockResolvedValueOnce(mockFetchError(404, 'Not Found'));
+            fetchMock.mockImplementation(async () => {
+                active++;
+                maximumActive = Math.max(maximumActive, active);
+                await new Promise(resolve => setTimeout(resolve, 10));
+                active--;
+                return mockFetchResponse({ hashes: [], metadata: [] });
+            });
+
+            await backend.queryMultipleCollections(
+                ['a', 'b', 'c', 'd', 'e'], 'search', 5, 0.25,
+                { ...defaultSettings, multi_query_concurrency: 2 },
+            );
+
+            expect(maximumActive).toBe(2);
+        });
     });
 
     describe('purgeVectorIndex', () => {

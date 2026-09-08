@@ -956,6 +956,7 @@ function scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmou
  * @returns {Promise<Record<string, { hashes: number[], metadata: object[] }>>} - Results mapped to collection IDs
  */
 export async function queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+    const totalStart = performance.now();
     const backend = await getBackend(settings);
 
     // Sources that require client-side embedding generation
@@ -963,6 +964,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     let queryVector = null;
 
     // Generate query vector once for all collections (efficiency)
+    const embeddingStart = performance.now();
     if (clientSideEmbeddingSources.includes(settings.source)) {
         try {
             // getAdditionalArgs expects string[], not objects
@@ -979,12 +981,27 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
             console.warn(`[VectHare] Client-side embedding failed for ${settings.source}: ${clientEmbedError.message}. Falling back to server-side embedding.`);
         }
     }
+    const queryEmbeddingMs = performance.now() - embeddingStart;
+
+    const attachTimings = (results, backendSearchMs) => {
+        Object.defineProperty(results, '_timings', {
+            value: {
+                queryEmbeddingMs,
+                backendSearchMs,
+                totalRetrievalMs: performance.now() - totalStart,
+            },
+            enumerable: false,
+        });
+        return results;
+    };
 
     // Check if hybrid search is enabled - process each collection with hybrid search
     if (settings.hybrid_search_enabled) {
         console.log('[VectHare] Hybrid search enabled for multi-collection query');
         const processedResults = {};
-        for (const collectionId of collectionIds) {
+        const backendStart = performance.now();
+        const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
+        await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
             try {
                 const queryStart = Date.now();
                 processedResults[collectionId] = await hybridSearch(collectionId, searchText, topK, settings, { queryVector });
@@ -996,8 +1013,8 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
                 recordError(settings?.vector_backend || 'standard', error);
                 processedResults[collectionId] = { hashes: [], metadata: [] };
             }
-        }
-        return processedResults;
+        }), concurrency);
+        return attachTimings(processedResults, performance.now() - backendStart);
     }
 
     // Standard vector search flow
@@ -1005,6 +1022,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     const overfetchAmount = getOverfetchAmount(topK);
     // VEC-18: Track query latency for health dashboard
     const queryStart = Date.now();
+    const backendStart = performance.now();
     let rawResults;
     try {
         rawResults = await backend.queryMultipleCollections(collectionIds, searchText, overfetchAmount, threshold, settings, queryVector);
@@ -1015,6 +1033,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
         recordError(settings?.vector_backend || 'standard', error);
         throw error;
     }
+    const backendSearchMs = performance.now() - backendStart;
 
     // Apply scoring to each collection's results
     const processedResults = {};
@@ -1053,7 +1072,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
         };
     }
 
-    return processedResults;
+    return attachTimings(processedResults, backendSearchMs);
 }
 
 /**

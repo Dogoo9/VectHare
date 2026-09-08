@@ -18,7 +18,7 @@ import { cleanText } from './text-cleaning.js';
 import {
     getSavedHashes,
     insertVectorItems,
-    queryCollection,
+    queryMultipleCollections,
     queryActiveCollections,
     deleteVectorItems,
     purgeVectorIndex,
@@ -623,7 +623,8 @@ function buildSearchQuery(chat, settings) {
  * @param {object} debugData Debug tracking object
  * @returns {Promise<object[]>} Array of chunk objects with scores
  */
-async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
+export async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
+    const totalStart = performance.now();
     let chunksForVisualizer = [];
     const effectiveTopK = settings.top_k ?? settings.insert;
 
@@ -638,9 +639,32 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
         }
     }
 
+    const backendStart = performance.now();
+    let resultMap = {};
+    try {
+        resultMap = await queryMultipleCollections(
+            activeCollections,
+            queryText,
+            effectiveTopK,
+            settings.score_threshold || 0,
+            settings,
+        );
+    } catch (error) {
+        // A request-wide failure is reported for every collection; per-collection
+        // failures are represented by the backend as empty results with `error`.
+        for (const collectionId of activeCollections) {
+            resultMap[collectionId] = { hashes: [], metadata: [], error: error.message };
+        }
+    }
+    const backendSearchMs = performance.now() - backendStart;
+    const normalizationStart = performance.now();
+
     for (const collectionId of activeCollections) {
         try {
-            const queryResults = await queryCollection(collectionId, queryText, effectiveTopK, settings);
+            const queryResults = resultMap[collectionId] || { hashes: [], metadata: [] };
+            if (queryResults.error) {
+                throw new Error(queryResults.error);
+            }
 
             // TRACE: Vector query results for this collection
             addTrace(debugData, 'vector_search', `Query completed for ${collectionId}`, {
@@ -660,6 +684,7 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
             // Build chunks with text for visualizer
             const collectionChunks = queryResults.metadata.map((meta, idx) => {
                 const hash = queryResults.hashes[idx];
+                const normalizedMetadata = { ...meta, collectionId };
 
                 // Prefer text from metadata (stored in vector DB)
                 let text = meta.text;
@@ -691,7 +716,7 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
 
                 return {
                     hash: hash,
-                    metadata: meta,
+                    metadata: normalizedMetadata,
                     score: meta.score || 1.0,
                     originalScore: meta.originalScore,
                     keywordBoost: meta.keywordBoost,
@@ -722,6 +747,16 @@ async function queryAndMergeCollections(activeCollections, queryText, settings, 
     // Sort merged results by score (descending) and limit to topK
     chunksForVisualizer.sort((a, b) => b.score - a.score);
     chunksForVisualizer = chunksForVisualizer.slice(0, effectiveTopK);
+
+    const normalizationMs = performance.now() - normalizationStart;
+    const timings = {
+        queryEmbeddingMs: resultMap._timings?.queryEmbeddingMs || 0,
+        backendSearchMs: resultMap._timings?.backendSearchMs ?? backendSearchMs,
+        resultNormalizationMs: normalizationMs,
+        totalRetrievalMs: performance.now() - totalStart,
+    };
+    console.debug('[VectHare] Retrieval timings', timings);
+    addTrace(debugData, 'performance', 'Retrieval timings', timings);
 
     return chunksForVisualizer;
 }

@@ -20,6 +20,7 @@ import { extension_settings } from '../../../../extensions.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { oai_settings } from '../../../../openai.js';
 import { secret_state } from '../../../../secrets.js';
+import AsyncUtils from '../utils/async-utils.js';
 
 /**
  * Get the model value from settings based on provider
@@ -408,7 +409,8 @@ export class StandardBackend extends VectorBackend {
             console.warn('VectHare: query-multi failed, falling back to individual queries');
             const results = {};
             const errors = [];
-            for (const collectionId of collectionIds) {
+            const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
+            await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
                 try {
                     results[collectionId] = await this.queryCollection(collectionId, searchText, topK, settings, queryVector);
                 } catch (e) {
@@ -416,7 +418,7 @@ export class StandardBackend extends VectorBackend {
                     errors.push(`${collectionId}: ${e.message}`);
                     results[collectionId] = { hashes: [], metadata: [], error: e.message };
                 }
-            }
+            }), concurrency);
             if (errors.length > 0) {
                 console.error(`VectHare: ${errors.length} collection(s) failed to query:`, errors);
             }
