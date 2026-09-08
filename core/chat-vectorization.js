@@ -41,7 +41,9 @@ import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '
 import { Queue, LRUCache } from '../utils/data-structures.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
-import { nextCandidateK, resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
+import { resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
+import { fuseCollectionResults } from './collection-fusion.js';
+import { configureLogger, logger } from '../utils/logger.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
 import {
     getChatUUID,
@@ -737,39 +739,33 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
                 };
             });
 
-            for (const chunk of collectionChunks) {
-                chunksById.set(`${collectionId}:${chunk.hash}`, chunk);
+            // Collection metadata is optional. Retrieval must still succeed while
+            // settings are loading, or when an older installation has no entry.
+            let collectionMeta = {};
+            try {
+                collectionMeta = getCollectionMeta(collectionId) || {};
+            } catch (error) {
+                logger.debug(`VectHare: Collection metadata unavailable for ${collectionId}`, {
+                    error: error.message,
+                });
             }
+            collectionResultLists.push({
+                collectionId,
+                results: collectionChunks,
+                weight: collectionMeta.fusionWeight ?? 1,
+                sourcePriority: collectionMeta.sourcePriority,
+                collectionSize: collectionMeta.collectionSize ?? queryResults.collectionSize ?? null,
+                collectionType: collectionMeta.collectionType && collectionMeta.collectionType !== 'unknown'
+                    ? collectionMeta.collectionType
+                    : (collectionMeta.scope || 'unknown'),
+                embedding: collectionMeta.embedding,
+            });
         } catch (error) {
             console.warn(`VectHare: Failed to query collection ${collectionId}:`, error.message);
             addTrace(debugData, 'vector_search', `Query failed for ${collectionId}`, {
                 error: error.message
             });
         }
-      }
-
-      // Cheap, score-independent rejection happens before boosts, decay, groups,
-      // or the paid reranker. Collection scope/lock rules were applied when
-      // activeCollections was built immediately before this function.
-      let eligible = [...chunksById.values()].filter(chunk => {
-          const meta = getChunkMetadata(chunk.hash);
-          const stored = chunk.metadata || {};
-          return meta?.disabled !== true && meta?.deleted !== true && meta?.enabled !== false
-              && stored.disabled !== true && stored.deleted !== true && stored.enabled !== false;
-      });
-      eligible = (await applyConditionsStage(eligible, chat, settings, debugData, false));
-      eligible = deduplicateChunks(eligible, chat, settings, debugData).toInject;
-
-      if (eligible.length >= finalK || exhaustedCollections.size === activeCollections.length || requestK === candidateKMax) {
-          addTrace(debugData, 'candidate_pool', 'Adaptive candidate retrieval complete', {
-              candidateK: requestK, candidateKMax, finalK, eligible: eligible.length,
-              exhaustedCollections: exhaustedCollections.size
-          });
-          // Frequency/cooldown activation is recorded once, not once per refill.
-          return applyConditionsStage(eligible, chat, settings, debugData, true);
-      }
-
-      requestK = nextCandidateK(requestK, candidateKMax);
     }
 
     // Never compare raw scores across collections. Each backend list is already
