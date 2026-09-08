@@ -16,8 +16,20 @@ import { getBackend } from '../backends/backend-manager.js';
 import { createBM25Scorer, tokenize } from './bm25-scorer.js';
 import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 
-/** Default RRF constant (prevents division by zero, balances contribution) */
-export const DEFAULT_RRF_K = 60;
+import {
+    DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS, heuristicWeightedFusion,
+    reciprocalRankFusion, weightedCombination
+} from './fusion-algorithms.js';
+export { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS } from './fusion-algorithms.js';
+
+function getHeuristicSettings(settings) {
+    const result = {};
+    for (const key of Object.keys(HEURISTIC_WEIGHTED_DEFAULTS)) {
+        const settingKey = `hybrid_heuristic_${key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)}`;
+        if (settings[settingKey] !== undefined) result[key] = Number(settings[settingKey]);
+    }
+    return result;
+}
 
 /**
  * Perform hybrid search combining vector and full-text results
@@ -33,16 +45,18 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
     const backend = await getBackend(settings);
 
     const {
-        fusionMethod = settings.hybrid_fusion_method || 'rrf',
+        fusionMethod = settings.hybrid_fusion_method || 'heuristic_weighted',
         vectorWeight = settings.hybrid_vector_weight ?? 0.5,
         textWeight = settings.hybrid_text_weight ?? 0.5,
         rrfK = settings.hybrid_rrf_k || DEFAULT_RRF_K,
+        heuristicSettings = getHeuristicSettings(settings),
         queryVector = null
     } = options;
 
     // Check if backend supports native hybrid search and user prefers it
     const preferNative = settings.hybrid_native_prefer !== false;
-    if (preferNative && backend.supportsHybridSearch && backend.supportsHybridSearch()) {
+    if (preferNative && fusionMethod !== 'heuristic_weighted' &&
+        backend.supportsHybridSearch && backend.supportsHybridSearch()) {
         console.log(`[HybridSearch] Using native hybrid search (${backend.constructor.name})`);
         try {
             return await backend.hybridQuery(collectionId, searchText, topK, settings, {
@@ -65,7 +79,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
         searchText,
         topK,
         settings,
-        { fusionMethod, vectorWeight, textWeight, rrfK, queryVector }
+        { fusionMethod, vectorWeight, textWeight, rrfK, heuristicSettings, queryVector }
     );
 }
 
@@ -86,7 +100,8 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         vectorWeight,
         textWeight,
         rrfK,
-        queryVector
+        queryVector,
+        heuristicSettings
     } = options;
 
     // Fetch more results for fusion (need candidates from both methods)
@@ -135,7 +150,14 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
             [vectorResultsToRanked(vectorResults), bm25Results],
             rrfK
         );
-    } else {
+    } else if (fusionMethod === 'heuristic_weighted') {
+        console.log('[HybridSearch] Applying legacy heuristic-weighted fusion...');
+        fusedResults = heuristicWeightedFusion(
+            [vectorResultsToRanked(vectorResults), bm25Results],
+            rrfK,
+            heuristicSettings
+        );
+    } else if (fusionMethod === 'weighted') {
         console.log(`[HybridSearch] Applying weighted fusion (α=${vectorWeight}, β=${textWeight})...`);
         fusedResults = weightedCombination(
             vectorResultsToScored(vectorResults),
@@ -143,19 +165,22 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
             vectorWeight,
             textWeight
         );
+    } else {
+        throw new Error(`Unsupported hybrid fusion method: ${fusionMethod}`);
     }
 
     // 5. Return top K fused results
     const topResults = fusedResults.slice(0, topK);
+    const finalScore = result => fusionMethod === 'rrf' ? result.rrfScore : result.combinedScore;
 
     console.log(`[HybridSearch] Returning ${topResults.length} fused results`);
     if (topResults.length > 0) {
         // Log score distribution for debugging
-        const scores = topResults.map(r => r.rrfScore || r.combinedScore || 0);
+        const scores = topResults.map(r => finalScore(r) || 0);
         console.log(`[HybridSearch] Score distribution: min=${Math.min(...scores).toFixed(4)}, max=${Math.max(...scores).toFixed(4)}`);
         console.log(`[HybridSearch] Top 3 results:`);
         topResults.slice(0, 3).forEach((r, i) => {
-            const score = (r.rrfScore || r.combinedScore || 0).toFixed(4);
+            const score = (finalScore(r) || 0).toFixed(4);
             const vRank = r.ranks?.vector || 'N/A';
             const tRank = r.ranks?.text || 'N/A';
             const vScore = (r.vectorScore || 0).toFixed(4);
@@ -170,9 +195,11 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
             ...(r.result?.metadata || r.metadata || {}),
             text: r.result?.text ?? r.text,
             hash: r.result?.hash ?? r.hash,
-            score: r.rrfScore ?? r.combinedScore ?? 0,
+            score: finalScore(r) ?? 0,
             vectorScore: r.vectorScore ?? 0,
             textScore: r.textScore ?? r.bm25Score ?? 0,
+            normalizedVectorScore: r.normalizedVectorScore,
+            normalizedTextScore: r.normalizedTextScore,
             vectorRank: r.ranks?.vector,
             textRank: r.ranks?.text,
             fusionMethod: fusionMethod,
@@ -184,7 +211,9 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
                 textScore: r.textScore ?? r.bm25Score ?? 0,
                 vectorRank: r.ranks?.vector,
                 textRank: r.ranks?.text,
-                finalScore: r.rrfScore ?? r.combinedScore ?? 0
+                normalizedVectorScore: r.normalizedVectorScore,
+                normalizedTextScore: r.normalizedTextScore,
+                finalScore: finalScore(r) ?? 0
             }
         }))
     };
