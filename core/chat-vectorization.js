@@ -306,8 +306,6 @@ export function promoteKeywordMatches(chunks, queryText, extractedKeywords = [])
         chunk.keywordMatched = true;
         chunk.keywordForceInjected = true;
         chunk.matchedQueryKeywords = [...new Set(matchedKeywords)];
-        chunk.matchedKeywords = chunk.matchedQueryKeywords;
-        chunk.keywordBoosted = true;
         chunk.originalScore ??= oldScore;
         chunk.score = 1.0;
         matchedCount++;
@@ -718,7 +716,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         resultMap = await queryMultipleCollections(
             activeCollections,
             queryText,
-            candidateKMax,
+            candidateK,
             // Threshold locally after keyword promotion. Applying it in the
             // backend would discard low-vector-score keyword hits before they
             // can be promoted to an authoritative 100% match.
