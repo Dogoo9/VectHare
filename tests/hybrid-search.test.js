@@ -49,6 +49,7 @@ import {
     hybridSearch,
     reciprocalRankFusion,
     weightedCombination,
+    heuristicWeightedFusion,
 } from '../core/hybrid-search.js';
 
 // ============================================================================
@@ -376,9 +377,9 @@ describe('weightedCombination', () => {
         // All scores should be normalized
         for (const r of results) {
             expect(r.vectorScore).toBeGreaterThanOrEqual(0);
-            expect(r.vectorScore).toBeLessThanOrEqual(1);
+            expect(r.normalizedVectorScore).toBeLessThanOrEqual(1);
             expect(r.textScore).toBeGreaterThanOrEqual(0);
-            expect(r.textScore).toBeLessThanOrEqual(1);
+            expect(r.normalizedTextScore).toBeLessThanOrEqual(1);
         }
     });
 
@@ -429,7 +430,8 @@ describe('weightedCombination', () => {
         const results = weightedCombination(vectorResults, textResults);
 
         const hash1Entry = results.find(r => r.hash === 1);
-        expect(hash1Entry.vectorScore).toBe(1.0); // Normalized max in vector list
+        expect(hash1Entry.vectorScore).toBe(0.8); // Raw score is preserved
+        expect(hash1Entry.normalizedVectorScore).toBe(1.0);
         expect(hash1Entry.textScore).toBe(0); // Not in text list
     });
 
@@ -448,7 +450,8 @@ describe('weightedCombination', () => {
 
         const hash2Entry = results.find(r => r.hash === 2);
         expect(hash2Entry.vectorScore).toBe(0); // Not in vector list
-        expect(hash2Entry.textScore).toBe(1.0); // Normalized max in text list
+        expect(hash2Entry.textScore).toBe(5.0); // Raw score is preserved
+        expect(hash2Entry.normalizedTextScore).toBe(1.0);
     });
 
     it('should skip results with undefined/null hash', () => {
@@ -544,7 +547,7 @@ describe('hybridSearch', () => {
             ],
         });
 
-        const settings = { hybrid_native_prefer: true };
+        const settings = { hybrid_native_prefer: true, hybrid_fusion_method: 'rrf' };
         const results = await hybridSearch('test-collection', 'search query', 10, settings);
 
         expect(mockBackend.supportsHybridSearch).toHaveBeenCalled();
@@ -563,7 +566,7 @@ describe('hybridSearch', () => {
             ],
         });
 
-        const settings = { hybrid_native_prefer: true };
+        const settings = { hybrid_native_prefer: true, hybrid_fusion_method: 'rrf' };
         const results = await hybridSearch('test-collection', 'dragon', 10, settings);
 
         expect(mockBackend.hybridQuery).toHaveBeenCalled();
@@ -635,7 +638,7 @@ describe('hybridSearch', () => {
         expect(results).toEqual({ hashes: [], metadata: [] });
     });
 
-    it('should use RRF fusion method by default', async () => {
+    it('should use the evaluation-selected heuristic fusion method by default', async () => {
         mockBackend.queryCollection.mockResolvedValue({
             hashes: [1, 2],
             metadata: [
@@ -647,7 +650,7 @@ describe('hybridSearch', () => {
         const settings = {};
         const results = await hybridSearch('test-collection', 'dragon', 10, settings);
 
-        expect(results.metadata[0].fusionMethod).toBe('rrf');
+        expect(results.metadata[0].fusionMethod).toBe('heuristic_weighted');
     });
 
     it('should use weighted fusion when specified', async () => {
@@ -903,7 +906,7 @@ describe('Edge Cases', () => {
 
             expect(() => weightedCombination(vectorResults, [])).not.toThrow();
             const results = weightedCombination(vectorResults, []);
-            expect(results[0].vectorScore).toBe(1); // Normalized
+            expect(results[0].normalizedVectorScore).toBe(1);
         });
 
         it('should handle very small score values', () => {

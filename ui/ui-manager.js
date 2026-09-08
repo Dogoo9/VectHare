@@ -457,6 +457,7 @@ export function renderSettings(containerId, settings, callbacks) {
                                     <select id="vecthare_hybrid_fusion_method" class="vecthare-select">
                                         <option value="rrf">RRF (Reciprocal Rank Fusion)</option>
                                         <option value="weighted">Weighted Linear Combination</option>
+                                        <option value="heuristic_weighted">Legacy Heuristic Weighted</option>
                                     </select>
                                     <small class="vecthare_hint">RRF is parameter-free and robust; Weighted allows fine-tuning</small>
 
@@ -2007,7 +2008,7 @@ function bindSettingsEvents(settings, callbacks) {
 
     // Fusion method selector
     $('#vecthare_hybrid_fusion_method')
-        .val(settings.hybrid_fusion_method || 'rrf')
+        .val(settings.hybrid_fusion_method || 'heuristic_weighted')
         .on('change', function() {
             settings.hybrid_fusion_method = String($(this).val());
             applySettingsSnapshot(settings);
@@ -2019,7 +2020,7 @@ function bindSettingsEvents(settings, callbacks) {
             console.log(`VectHare: Hybrid fusion method changed to ${settings.hybrid_fusion_method}`);
         });
     // Initialize visibility based on current method
-    const isWeightedMethod = (settings.hybrid_fusion_method || 'rrf') === 'weighted';
+    const isWeightedMethod = (settings.hybrid_fusion_method || 'heuristic_weighted') === 'weighted';
     $('#vecthare_hybrid_weights').toggle(isWeightedMethod);
     $('#vecthare_hybrid_rrf_settings').toggle(!isWeightedMethod);
 
