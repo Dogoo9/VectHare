@@ -13,6 +13,7 @@ vi.mock('../backends/backend-manager.js', () => ({
 // Mock the bm25-scorer - provide a working implementation
 vi.mock('../core/bm25-scorer.js', () => ({
     tokenize: vi.fn((text) => text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0)),
+    tokenizeSimple: vi.fn((text) => text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0)),
     createBM25Scorer: vi.fn((documents, options) => {
         // Simple mock BM25 scorer that scores based on query term overlap
         const docs = documents.map(d => {
@@ -50,6 +51,7 @@ import {
     reciprocalRankFusion,
     weightedCombination,
 } from '../core/hybrid-search.js';
+import { indexLexicalItems, purgeAllLexicalIndexes } from '../core/lexical-index.js';
 
 // ============================================================================
 // Constants Tests
@@ -520,6 +522,7 @@ describe('hybridSearch', () => {
     let mockBackend;
 
     beforeEach(() => {
+        purgeAllLexicalIndexes();
         mockBackend = {
             constructor: { name: 'MockBackend' },
             supportsHybridSearch: vi.fn(() => false),
@@ -603,6 +606,30 @@ describe('hybridSearch', () => {
 
         expect(mockBackend.hybridQuery).not.toHaveBeenCalled();
         expect(mockBackend.queryCollection).toHaveBeenCalled();
+    });
+
+    it('uses independent dense and full-collection lexical candidate generators', async () => {
+        indexLexicalItems('independent', [
+            { hash: 1, text: 'exact quasar identifier' },
+            { hash: 2, text: 'quasar appears in both' },
+            { hash: 4, text: 'unrelated indexed document' },
+        ]);
+        mockBackend.queryCollection.mockResolvedValue({
+            hashes: [3, 2],
+            metadata: [
+                { text: 'semantic paraphrase only', score: 0.95 },
+                { text: 'quasar appears in both', score: 0.8 },
+            ],
+        });
+
+        const results = await hybridSearch('independent', 'quasar', 10, {});
+
+        expect(results.hashes).toContain(1); // lexical only
+        expect(results.hashes).toContain(3); // dense only
+        const shared = results.metadata.find(result => result.hash === 2);
+        expect(shared.vectorRank).toBeDefined();
+        expect(shared.textRank).toBeDefined();
+        expect(shared.score).toBeGreaterThan(results.metadata.find(result => result.hash === 1).score);
     });
 
     it('should return empty results when vector query fails', async () => {

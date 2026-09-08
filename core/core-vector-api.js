@@ -41,6 +41,7 @@ import {
 import { applyKeywordBoosts, getOverfetchAmount } from './keyword-boost.js';
 import { applyBM25Scoring } from './bm25-scorer.js';
 import { hybridSearch } from './hybrid-search.js';
+import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, purgeAllLexicalIndexes } from './lexical-index.js';
 import AsyncUtils from '../utils/async-utils.js';
 import StringUtils from '../utils/string-utils.js';
 import {
@@ -683,6 +684,7 @@ export async function insertVectorItems(collectionId, items, settings, onProgres
 
         // VEC-18: Record successful insert operation
         recordInsert(settings?.vector_backend || 'standard', items.length);
+        indexLexicalItems(collectionId, items);
     } catch (error) {
         // VEC-18: Record error
         recordError(settings?.vector_backend || 'standard', error);
@@ -797,6 +799,7 @@ export async function deleteVectorItems(collectionId, hashes, settings) {
         );
         // VEC-18: Record successful delete operation
         recordDelete(settings?.vector_backend || 'standard', hashes.length);
+        deleteLexicalItems(collectionId, hashes);
         return result;
     } catch (error) {
         // VEC-18: Record error
@@ -1114,6 +1117,7 @@ export async function purgeVectorIndex(collectionId, settings) {
     try {
         const backend = await getBackend(settings);
         await backend.purgeVectorIndex(collectionId, settings);
+        purgeLexicalIndex(collectionId);
         console.log(`VectHare: Purged vector index for collection ${collectionId}`);
         return true;
     } catch (error) {
@@ -1135,6 +1139,7 @@ export async function purgeFileVectorIndex(collectionId, settings) {
         console.log(`VectHare: Purging file vector index for collection ${collectionId}`);
         const backend = await getBackend(settings);
         await backend.purgeFileVectorIndex(collectionId, settings);
+        purgeLexicalIndex(collectionId);
         console.log(`VectHare: Purged vector index for collection ${collectionId}`);
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
@@ -1152,6 +1157,7 @@ export async function purgeAllVectorIndexes(settings) {
     try {
         const backend = await getBackend(settings);
         await backend.purgeAllVectorIndexes(settings);
+        purgeAllLexicalIndexes();
         console.log('VectHare: Purged all vector indexes');
         toastr.success('All vector indexes purged', 'Purge successful');
     } catch (error) {
@@ -1171,7 +1177,9 @@ export async function purgeAllVectorIndexes(settings) {
  */
 export async function updateChunkText(collectionId, hash, newText, settings) {
     const backend = await getBackend(settings);
-    return await backend.updateChunkText(collectionId, hash, newText, settings);
+    const result = await backend.updateChunkText(collectionId, hash, newText, settings);
+    indexLexicalItems(collectionId, [{ hash, text: newText }]);
+    return result;
 }
 
 /**
