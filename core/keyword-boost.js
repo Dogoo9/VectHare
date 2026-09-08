@@ -1,5 +1,6 @@
 import { porterStemmer } from './bm25-scorer.js';
 import { substituteParams } from '../../../../../script.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * ============================================================================
@@ -450,7 +451,7 @@ export function extractTextKeywords(text, options = {}) {
     }
 
     if (result.length > 0) {
-        console.debug(`[VectHare Keyword Extraction] Extracted text keywords (${level} level): [${result.map(k => `${k.text}(${k.weight.toFixed(2)}x, freq:${k.frequency})`).join(', ')}] from: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+        logger.trace('Extracted text keywords', { level, keywords: result, text });
     }
 
     return result;
@@ -508,7 +509,7 @@ export function extractChatKeywords(text, options = {}) {
     }
 
     if (keywords.length > 0) {
-        console.debug(`[VectHare Keyword Extraction] Extracted chat keywords: [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] from text: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+        logger.trace('Extracted chat keywords', { keywords, text });
     }
 
     return keywords;
@@ -666,7 +667,7 @@ export function extractBM25Keywords(text, options = {}) {
     }));
 
     if (keywords.length > 0) {
-        console.debug(`[VectHare BM25 Keywords] Level=${level}, scanned ${scanText.length}/${text.length} chars, ${sentences.length} sentences → [${keywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}]`);
+        logger.debug('Extracted BM25 keywords', { level, scannedCharacters: scanText.length, totalCharacters: text.length, sentenceCount: sentences.length, keywords });
     }
 
     return keywords;
@@ -875,7 +876,7 @@ export function extractSmartKeywords(text, options = {}) {
 
     if (keywords.length > 0) {
         const entityCount = keywords.filter(k => k.isEntity).length;
-        console.debug(`[VectHare Smart Keywords] Level=${level}, ${keywords.length} keywords (${entityCount} entities) → [${keywords.map(k => `${k.text}(${k.type})`).join(', ')}]`);
+        logger.debug('Extracted smart keywords', { level, keywordCount: keywords.length, entityCount, keywords });
     }
 
     return keywords;
@@ -985,7 +986,7 @@ export function applyKeywordBoost(results, query, options = {}) {
     const queryLower = query.toLowerCase();
     const queryTokens = extractQueryTokens(query);
 
-    console.log(`[VectHare Keyword Boost] Starting keyword boost for query: "${query}" (diminishing=${diminishingReturns}, cap=${perKeywordCap})`);
+    logger.debug('Starting keyword boost', { query, diminishingReturns, perKeywordCap });
 
     const boosted = results.map(result => {
         const rawKeywords = result.keywords || result.metadata?.keywords || [];
@@ -1033,7 +1034,7 @@ export function applyKeywordBoost(results, query, options = {}) {
             const scaleInfo = diminishingReturns
                 ? ` (raw=${rawBoost.toFixed(2)}x, scale=${(MATCH_SCALING_FACTORS[Math.min(matchedKeywords.length, 3)] * 100).toFixed(0)}%)`
                 : '';
-            console.log(`[VectHare Keyword Boost] Result matched ${matchedKeywords.length} keyword(s): [${matchedKeywords.map(k => `${k.text}(${k.weight.toFixed(2)}x)`).join(', ')}] → boost: ${finalBoost.toFixed(2)}x${scaleInfo}, score: ${result.score.toFixed(4)} → ${(result.score * finalBoost).toFixed(4)}`);
+            logger.trace('Keyword score breakdown', { matchedKeywords, finalBoost, scaleInfo, originalScore: result.score, boostedScore: result.score * finalBoost });
         }
 
         return {
@@ -1055,7 +1056,7 @@ export function applyKeywordBoost(results, query, options = {}) {
     boosted.sort((a, b) => b.score - a.score);
 
     const boostedCount = boosted.filter(r => r.keywordBoosted).length;
-    console.log(`[VectHare Keyword Boost] Applied keyword boosts to ${boostedCount}/${boosted.length} results (diminishing=${diminishingReturns})`);
+    logger.debug('Applied keyword boosts', { boostedCount, resultCount: boosted.length, diminishingReturns });
 
     return boosted;
 }

@@ -681,7 +681,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
                 }))
             });
 
-            console.log(`VectHare: Retrieved ${queryResults.hashes.length} chunks from ${collectionId}`);
+            logger.debug(`VectHare: Retrieved ${queryResults.hashes.length} chunks from ${collectionId}`);
 
             // Build chunks with text for visualizer
             const collectionChunks = queryResults.metadata.map((meta, idx) => {
@@ -1025,15 +1025,15 @@ function applyTemporalDecayStage(chunks, chat, settings, threshold, debugData) {
         if (scenes.length > 0) {
             decayedChunks = applySceneAwareDecay(chunksWithScores, currentMessageId, scenes, settings.temporal_decay);
             decayType = 'scene_aware';
-            console.log('VectHare: Applied scene-aware temporal decay to search results');
+            logger.debug('VectHare: Applied scene-aware temporal decay to search results');
         } else {
             decayedChunks = applyDecayToResults(chunksWithScores, currentMessageId, settings.temporal_decay);
             decayType = 'standard_no_scenes';
-            console.log('VectHare: Applied temporal decay to search results (no scenes marked)');
+            logger.debug('VectHare: Applied temporal decay to search results (no scenes marked)');
         }
     } else {
         decayedChunks = applyDecayToResults(chunksWithScores, currentMessageId, settings.temporal_decay);
-        console.log('VectHare: Applied temporal decay to search results');
+        logger.debug('VectHare: Applied temporal decay to search results');
     }
 
     decayedChunks.sort((a, b) => b.score - a.score);
@@ -1357,8 +1357,8 @@ function deduplicateChunks(chunks, chat, settings, debugData) {
         ? chat.slice(-deduplicationDepth)
         : chat;
 
-    console.log(`[VectHare Dedup] Building hash set from ${recentMessages.length} recent messages (depth: ${deduplicationDepth})`);
-    console.log(`[VectHare Dedup] Total chat length: ${chat.length}, checking duplicates in last ${recentMessages.length} messages`);
+    logger.debug(`[VectHare Dedup] Building hash set from ${recentMessages.length} recent messages (depth: ${deduplicationDepth})`);
+    logger.debug(`[VectHare Dedup] Total chat length: ${chat.length}, checking duplicates in last ${recentMessages.length} messages`);
 
     // Build set of hashes currently in chat context
     const currentChatHashes = new Set();
@@ -1384,7 +1384,7 @@ function deduplicateChunks(chunks, chat, settings, debugData) {
         }
     });
 
-    console.log(`[VectHare Dedup] Built hash set with ${currentChatHashes.size} unique message hashes from recent context`);
+    logger.debug(`[VectHare Dedup] Built hash set with ${currentChatHashes.size} unique message hashes from recent context`);
 
     const toInject = [];
     const skipped = [];
@@ -1394,10 +1394,9 @@ function deduplicateChunks(chunks, chat, settings, debugData) {
 
         if (isInChat) {
             const matchedMsg = chatHashMap.get(chunk.hash);
-            console.debug(`[VectHare Dedup] ❌ SKIPPING chunk (hash: ${chunk.hash})`);
-            console.debug(`  Chunk text: "${chunk.text?.substring(0, 80)}..."`);
-            console.debug(`  Matches chat message #${matchedMsg.index} from ${matchedMsg.name}: "${matchedMsg.preview}..."`);
-            console.debug(`  Score: ${chunk.score?.toFixed(4)}, Collection: ${chunk.collectionId}`);
+            logger.debug(`[VectHare Dedup] ❌ SKIPPING chunk (hash: ${chunk.hash})`);
+            logger.trace('Duplicate chunk detail', { text: chunk.text, matchedMessageIndex: matchedMsg.index, matchedMessageName: matchedMsg.name, preview: matchedMsg.preview });
+            logger.debug(`  Score: ${chunk.score?.toFixed(4)}, Collection: ${chunk.collectionId}`);
 
             skipped.push(chunk);
             recordChunkFate(debugData, chunk.hash, 'injection', 'skipped',
@@ -1405,8 +1404,8 @@ function deduplicateChunks(chunks, chat, settings, debugData) {
                 { score: chunk.score }
             );
         } else {
-            console.debug(`[VectHare Dedup] ✅ KEEPING chunk (hash: ${chunk.hash}, score: ${chunk.score?.toFixed(4)})`);
-            console.debug(`  Text: "${chunk.text?.substring(0, 80)}..."`);
+            logger.debug(`[VectHare Dedup] ✅ KEEPING chunk (hash: ${chunk.hash}, score: ${chunk.score?.toFixed(4)})`);
+            logger.trace('Kept chunk content', { text: chunk.text });
 
             toInject.push(chunk);
             recordChunkFate(debugData, chunk.hash, 'injection', 'passed',
@@ -1422,7 +1421,7 @@ function deduplicateChunks(chunks, chat, settings, debugData) {
         skippedDuplicates: skipped.length
     });
 
-    console.log(`[VectHare Dedup] FINAL: ${toInject.length} will inject, ${skipped.length} skipped as duplicates`);
+    logger.debug(`[VectHare Dedup] FINAL: ${toInject.length} will inject, ${skipped.length} skipped as duplicates`);
 
     return { toInject, skipped };
 }
@@ -1544,26 +1543,26 @@ function resolveChunkInjectionPosition(chunk, settings) {
  */
 function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
     // Control print: Log chunks QUEUED for injection (not yet injected)
-    console.log(`[VectHare Injection Control] Preparing to inject ${chunksToInject.length} chunks`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    logger.debug(`[VectHare Injection Control] Preparing to inject ${chunksToInject.length} chunks`);
+    logger.debug('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     let emptyTextCount = 0;
     chunksToInject.forEach((chunk, idx) => {
         const textLength = chunk.text?.length || 0;
         const hasValidText = textLength > 0 && chunk.text !== '(text not found)' && chunk.text !== '(text not available)';
         if (!hasValidText) emptyTextCount++;
 
-        console.log(`  [${idx + 1}/${chunksToInject.length}] CHUNK QUEUED FOR INJECTION ${!hasValidText ? '⚠️ EMPTY/INVALID TEXT' : ''}`);
-        console.log(`      Hash: ${chunk.hash}`);
-        console.log(`      Score: ${chunk.score?.toFixed(4)}`);
-        console.log(`      Collection: ${chunk.collectionId}`);
-        console.log(`      Text length: ${textLength} chars ${!hasValidText ? '⚠️' : '✓'}`);
-        console.log(`      Text preview: "${chunk.text?.substring(0, 120)}${textLength > 120 ? '...' : ''}"`);
-        console.log('      ─────────────────────────────────────────────────────────────────');
+        logger.debug(`  [${idx + 1}/${chunksToInject.length}] CHUNK QUEUED FOR INJECTION ${!hasValidText ? '⚠️ EMPTY/INVALID TEXT' : ''}`);
+        logger.debug(`      Hash: ${chunk.hash}`);
+        logger.debug(`      Score: ${chunk.score?.toFixed(4)}`);
+        logger.debug(`      Collection: ${chunk.collectionId}`);
+        logger.debug(`      Text length: ${textLength} chars ${!hasValidText ? '⚠️' : '✓'}`);
+        logger.trace('Queued chunk content', { text: chunk.text });
+        logger.debug('      ─────────────────────────────────────────────────────────────────');
     });
     if (emptyTextCount > 0) {
         console.warn(`[VectHare Injection Control] ⚠️ WARNING: ${emptyTextCount}/${chunksToInject.length} chunks have empty or placeholder text!`);
     }
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    logger.debug('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     // Group chunks by resolved injection position+depth
     const positionGroups = new Map(); // "position:depth" → chunks[]
@@ -1583,8 +1582,8 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         const [_, group] = [...positionGroups.entries()][0];
         const insertedText = buildNestedInjectionText(group.chunks, settings);
 
-        console.log(`[VectHare Injection Control] Single position injection: position="${group.position}", depth=${group.depth}, chunks=${group.chunks.length}, textLength=${insertedText.length}`);
-        console.log(`[VectHare Injection Control] Injection text preview: "${insertedText.substring(0, 200)}${insertedText.length > 200 ? '...' : ''}"`);
+        logger.debug(`[VectHare Injection Control] Single position injection: position="${group.position}", depth=${group.depth}, chunks=${group.chunks.length}, textLength=${insertedText.length}`);
+        logger.trace('Injection content', { text: insertedText });
 
         setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, group.position, group.depth, false);
 
@@ -1592,8 +1591,8 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         const verifiedPrompt = extension_prompts[EXTENSION_PROMPT_TAG];
         const injectionVerified = verifiedPrompt && verifiedPrompt.value === insertedText;
 
-        console.log(`[VectHare Injection Control] Injection verification: ${injectionVerified ? '✓ PASSED' : '✗ FAILED'}`);
-        console.log(`[VectHare Injection Control] extension_prompts[${EXTENSION_PROMPT_TAG}]:`, {
+        logger.debug(`[VectHare Injection Control] Injection verification: ${injectionVerified ? '✓ PASSED' : '✗ FAILED'}`);
+        logger.debug(`[VectHare Injection Control] extension_prompts[${EXTENSION_PROMPT_TAG}]:`, {
             exists: !!verifiedPrompt,
             valueLength: verifiedPrompt?.value?.length,
             position: verifiedPrompt?.position,
@@ -1621,7 +1620,7 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
     }
 
     // Multiple injection positions - create separate extension prompts for each
-    console.log(`[VectHare Injection Control] Multiple position injection: ${positionGroups.size} different positions`);
+    logger.debug(`[VectHare Injection Control] Multiple position injection: ${positionGroups.size} different positions`);
 
     // Clear the main tag first (will be unused when multi-position)
     setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, false);
@@ -1635,9 +1634,9 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         const groupSettings = { ...settings, rag_context: '', rag_xml_tag: '' };
         const groupText = buildNestedInjectionText(group.chunks, groupSettings);
 
-        console.log(`[VectHare Injection Control] Position group ${groupIndex + 1}/${positionGroups.size}: key="${key}", chunks=${group.chunks.length}, textLength=${groupText.length}`);
+        logger.debug(`[VectHare Injection Control] Position group ${groupIndex + 1}/${positionGroups.size}: key="${key}", chunks=${group.chunks.length}, textLength=${groupText.length}`);
         group.chunks.forEach((chunk, idx) => {
-            console.log(`    [${idx + 1}/${group.chunks.length}] Hash: ${chunk.hash}, Score: ${chunk.score?.toFixed(4)}`);
+            logger.debug(`    [${idx + 1}/${group.chunks.length}] Hash: ${chunk.hash}, Score: ${chunk.score?.toFixed(4)}`);
         });
 
         // Use unique tag per position group
@@ -1649,7 +1648,7 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         const verifiedPrompt = extension_prompts[tag];
         const verified = verifiedPrompt && verifiedPrompt.value === groupText;
 
-        console.log(`[VectHare Injection Control] Position group ${groupIndex + 1} verification: ${verified ? '✓ PASSED' : '✗ FAILED'}`);
+        logger.debug(`[VectHare Injection Control] Position group ${groupIndex + 1} verification: ${verified ? '✓ PASSED' : '✗ FAILED'}`);
 
         if (!verified) {
             console.warn(`VectHare: ⚠️ Injection verification failed for position ${key}`, {
@@ -1674,7 +1673,7 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
         groupIndex++;
     }
 
-    console.log(`[VectHare Injection Control] Injection complete: ${allVerified ? '✓ All verified' : '✗ Some failed'}, ${allTexts.length} groups`);
+    logger.debug(`[VectHare Injection Control] Injection complete: ${allVerified ? '✓ All verified' : '✗ Some failed'}, ${allTexts.length} groups`);
 
     return {
         verified: allVerified,
@@ -1696,12 +1695,14 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
  * @param {string} type Generation type
  */
 export async function rearrangeChat(chat, settings, type) {
-    console.log(`🐰 VectHare: rearrangeChat called (type: ${type}, chat length: ${chat?.length || 0})`);
+    configureLogger({ level: settings.log_level || 'info', content: settings.log_content === true });
+    const retrievalStarted = performance.now();
+    logger.debug('Retrieval started', { type, chatLength: chat?.length || 0 });
 
     try {
         // === EARLY EXITS ===
         if (type === 'quiet') {
-            console.debug('VectHare: Skipping quiet prompt');
+            logger.debug('VectHare: Skipping quiet prompt');
             return;
         }
 
@@ -1716,14 +1717,14 @@ export async function rearrangeChat(chat, settings, type) {
         }
 
         if (!getCurrentChatId() || !Array.isArray(chat)) {
-            console.debug('VectHare: No chat selected');
+            logger.debug('VectHare: No chat selected');
             return;
         }
 
         const minChatLength = settings.min_chat_length ?? 0;
         if (minChatLength > 0 && chat.length < minChatLength) {
             console.warn(`⚠️ VectHare: Not enough messages to inject chunks (${chat.length} < ${minChatLength})`);
-            console.log(`   💡 You need at least ${minChatLength} messages before chunk injection starts`);
+            logger.debug(`   💡 You need at least ${minChatLength} messages before chunk injection starts`);
             return;
         }
 
@@ -1735,19 +1736,19 @@ export async function rearrangeChat(chat, settings, type) {
 
         if (!hasCollections && !canQueryWI) {
             console.warn('⚠️ VectHare: No enabled collections to query and World Info disabled - chunks cannot be injected!');
-            console.log('   💡 Make sure you have enabled at least one collection in VectHare settings, or enable World Info');
+            logger.debug('   💡 Make sure you have enabled at least one collection in VectHare settings, or enable World Info');
             return;
         }
         if (hasCollections) {
-            console.log(`VectHare: Will query ${collectionsToQuery.length} collections:`, collectionsToQuery);
+            logger.debug(`VectHare: Will query ${collectionsToQuery.length} collections:`, collectionsToQuery);
         } else {
-            console.log('VectHare: No regular collections enabled, but World Info is enabled - will query lorebooks only');
+            logger.debug('VectHare: No regular collections enabled, but World Info is enabled - will query lorebooks only');
         }
 
         // === STAGE 2: Build search query ===
         const queryText = buildSearchQuery(chat, settings);
         if (queryText.length === 0) {
-            console.debug('VectHare: No text to query');
+            logger.debug('VectHare: No text to query');
             return;
         }
 
@@ -1758,7 +1759,7 @@ export async function rearrangeChat(chat, settings, type) {
             baseWeight: settings.keyword_boost_base_weight || 1.5
         });
         const queryKeywordTexts = queryKeywords.map(kw => kw.text.toLowerCase());
-        console.log(`VectHare: Extracted ${queryKeywords.length} keywords from query:`, queryKeywordTexts);
+        logger.debug(`VectHare: Extracted ${queryKeywords.length} keywords from query:`, queryKeywordTexts);
 
         // === STAGE 3: Filter by activation conditions ===
         let activeCollections = [];
@@ -1779,12 +1780,12 @@ export async function rearrangeChat(chat, settings, type) {
 
         // Allow WI-only mode even if no regular collections pass filters
         if (activeCollections.length === 0 && !canQueryWI) {
-            console.log('⚠️ VectHare: No collections passed activation conditions and World Info disabled - chunks cannot be injected!');
-            console.log('   💡 Check your collection activation conditions in VectHare settings');
+            logger.debug('⚠️ VectHare: No collections passed activation conditions and World Info disabled - chunks cannot be injected!');
+            logger.debug('   💡 Check your collection activation conditions in VectHare settings');
             return;
         }
         if (activeCollections.length > 0) {
-            console.log(`✅ VectHare: ${activeCollections.length} collections passed activation filters:`, activeCollections);
+            logger.debug(`✅ VectHare: ${activeCollections.length} collections passed activation filters:`, activeCollections);
         }
 
         // === INITIALIZE DEBUG DATA ===
@@ -1817,7 +1818,10 @@ export async function rearrangeChat(chat, settings, type) {
         });
 
         // === STAGE 4: Query all collections and merge results ===
+        const backendStarted = performance.now();
         let chunks = await queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData);
+        const backendLatencyMs = performance.now() - backendStarted;
+        const candidatesRetrieved = chunks.length;
 
         // === STAGE 4.3: Boost chunks with matching query keywords ===
         if (chunks.length > 0) {
@@ -1860,7 +1864,7 @@ export async function rearrangeChat(chat, settings, type) {
             }
 
             if (keywordMatchCount > 0) {
-                console.log(`VectHare: Boosted ${keywordMatchCount}/${chunks.length} chunks with matching keywords to 100% score`);
+                logger.debug(`VectHare: Boosted ${keywordMatchCount}/${chunks.length} chunks with matching keywords to 100% score`);
                 debugData.stages.afterKeywordBoost = [...chunks];
                 debugData.stats.keywordBoosted = keywordMatchCount;
                 addTrace(debugData, 'keyword_boost', `Boosted ${keywordMatchCount} chunks with keyword matches`, {
@@ -1868,13 +1872,13 @@ export async function rearrangeChat(chat, settings, type) {
                     boostedCount: keywordMatchCount
                 });
             } else {
-                console.log(`VectHare: No chunks matched query keywords, all ${chunks.length} chunks keep original scores`);
+                logger.debug(`VectHare: No chunks matched query keywords, all ${chunks.length} chunks keep original scores`);
             }
         }
 
         // Semantic World Info is queried from WORLDINFO_SCAN_DONE, after ST's
         // keyword scan has produced the authoritative active-entry set.
-        console.log(`VectHare: Retrieved ${chunks.length} total chunks from ${activeCollections.length} collections`);
+        logger.debug(`VectHare: Retrieved ${chunks.length} total chunks from ${activeCollections.length} collections`);
 
         debugData.stages.initial = [...chunks];
         debugData.stats.retrievedFromVector = chunks.length;
@@ -1884,7 +1888,7 @@ export async function rearrangeChat(chat, settings, type) {
         chunks = await expandSummaryChunks(chunks, activeCollections, settings, debugData);
         if (chunks.length !== chunksBeforeExpansion || chunks.some(c => c.expandedFromSummary)) {
             const expandedCount = chunks.filter(c => c.expandedFromSummary).length;
-            console.log(`VectHare: Expanded ${expandedCount} summary chunks to parent text`);
+            logger.debug(`VectHare: Expanded ${expandedCount} summary chunks to parent text`);
             debugData.stages.afterSummaryExpansion = [...chunks];
             debugData.stats.summariesExpanded = expandedCount;
         }
@@ -1928,29 +1932,29 @@ export async function rearrangeChat(chat, settings, type) {
             timestamp: Date.now(),
             settings: { threshold: settings.score_threshold, topK: (settings.top_k ?? settings.insert), temporal_decay: settings.temporal_decay }
         };
-        console.log(`VectHare: Stored ${chunks.length} chunks for visualizer`);
+        logger.debug(`VectHare: Stored ${chunks.length} chunks for visualizer`);
 
         // === STAGE 9: Deduplicate ===
-        console.log(`[VectHare Deduplication] Starting with ${chunks.length} chunks before deduplication`);
-        console.log(`[VectHare Deduplication] Current chat has ${chat.length} messages`);
+        logger.debug(`[VectHare Deduplication] Starting with ${chunks.length} chunks before deduplication`);
+        logger.debug(`[VectHare Deduplication] Current chat has ${chat.length} messages`);
 
         // The injection limit is deliberately enforced only now, after the last
         // ranking stage. Mandatory/group-linked members consume this same budget.
         const chunksToInject = selectFinalChunks(chunks, finalK);
         const skippedDuplicates = [];
 
-        console.log(`[VectHare Deduplication] After deduplication: ${chunksToInject.length} to inject, ${skippedDuplicates.length} skipped`);
+        logger.debug(`[VectHare Deduplication] After deduplication: ${chunksToInject.length} to inject, ${skippedDuplicates.length} skipped`);
         if (skippedDuplicates.length > 0) {
-            console.log(`[VectHare Deduplication] Skipped chunks (already in chat):`);
+            logger.debug(`[VectHare Deduplication] Skipped chunks (already in chat):`);
             skippedDuplicates.forEach((chunk, idx) => {
-                console.log(`  [${idx + 1}] Hash: ${chunk.hash}, Score: ${chunk.score?.toFixed(4)}, Text: "${chunk.text?.substring(0, 80)}..."`);
+                logger.trace('Skipped duplicate detail', { index: idx + 1, hash: chunk.hash, score: chunk.score, text: chunk.text });
             });
         }
 
         if (chunksToInject.length === 0) {
-            console.log('ℹ️ VectHare: All retrieved chunks already in context, nothing to inject');
-            console.log(`   ${skippedDuplicates.length} chunks were skipped (already in current chat)`);
-            console.info('[VectHare] Injection blocked: All retrieved chunks are already present in the current chat context. Adjust temporal decay or query depth if you want older messages.');
+            logger.debug('ℹ️ VectHare: All retrieved chunks already in context, nothing to inject');
+            logger.debug(`   ${skippedDuplicates.length} chunks were skipped (already in current chat)`);
+            logger.debug('[VectHare] Injection blocked: All retrieved chunks are already present in the current chat context. Adjust temporal decay or query depth if you want older messages.');
             debugData.stages.injected = [];
             debugData.stats.actuallyInjected = 0;
             debugData.stats.skippedDuplicates = skippedDuplicates.length;
@@ -1958,18 +1962,20 @@ export async function rearrangeChat(chat, settings, type) {
                 reason: 'All chunks already in current context',
                 skippedCount: skippedDuplicates.length
             });
+            debugData.timings = { totalLatencyMs: performance.now() - retrievalStarted, embeddingLatencyMs: 0, backendLatencyMs, rerankerLatencyMs };
             setLastSearchDebug(debugData);
+            logger.info('Retrieval complete', { ...debugData.timings, collectionsSearched: activeCollections.length, candidatesRetrieved, candidatesInjected: 0, finalCharacterCount: 0 });
             return;
         }
 
-        console.log(`[VectHare Deduplication] ✅ ${chunksToInject.length} chunks will proceed to injection`);
+        logger.debug(`[VectHare Deduplication] ✅ ${chunksToInject.length} chunks will proceed to injection`);
 
         // === STAGE 10: Inject into prompt ===
         const injection = injectChunksIntoPrompt(chunksToInject, settings, debugData);
 
-        console.log(`\n✅ VectHare: Successfully injected ${chunksToInject.length} chunk(s) into prompt`);
-        console.log(`   Verification: ${injection.verified ? '✓ PASSED' : '✗ FAILED'}`);
-        console.log(`   Total characters injected: ${injection.text.length}\n`);
+        logger.debug(`\n✅ VectHare: Successfully injected ${chunksToInject.length} chunk(s) into prompt`);
+        logger.debug(`   Verification: ${injection.verified ? '✓ PASSED' : '✗ FAILED'}`);
+        logger.debug(`   Total characters injected: ${injection.text.length}\n`);
 
         // Finalize debug data
         debugData.stages.injected = chunksToInject;
@@ -1995,7 +2001,8 @@ export async function rearrangeChat(chat, settings, type) {
         });
 
         setLastSearchDebug(debugData);
-        console.log(`VectHare: ✅ Injected ${chunksToInject.length} chunks (${skippedDuplicates.length} skipped - already in context)`);
+        debugData.timings = { totalLatencyMs: performance.now() - retrievalStarted, embeddingLatencyMs: 0, backendLatencyMs, rerankerLatencyMs };
+        logger.info('Retrieval complete', { ...debugData.timings, collectionsSearched: activeCollections.length, candidatesRetrieved, candidatesInjected: chunksToInject.length, finalCharacterCount: injection.text.length });
 
     } catch (error) {
         toastr.error(`Generation interceptor aborted: ${error.message}`, 'VectHare');
