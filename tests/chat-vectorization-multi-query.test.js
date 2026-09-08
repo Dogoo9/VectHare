@@ -5,11 +5,20 @@ vi.mock('../backends/backend-manager.js', () => ({ isBackendAvailable: vi.fn(() 
 const { queryMultipleCollections } = vi.hoisted(() => ({ queryMultipleCollections: vi.fn() }));
 
 vi.mock('../core/../../../../../script.js', () => ({
-    getCurrentChatId: vi.fn(), is_send_press: false, setExtensionPrompt: vi.fn(),
+    getCurrentChatId: vi.fn(() => 'chat-1'), is_send_press: false, setExtensionPrompt: vi.fn(),
     substituteParams: value => value, chat_metadata: {}, extension_prompts: {},
     getRequestHeaders: vi.fn(() => ({})),
 }));
-vi.mock('../core/../../../../extensions.js', () => ({ getContext: vi.fn(() => ({})) }));
+vi.mock('../core/../../../../extensions.js', () => ({
+    extension_settings: {
+        vecthare: {
+            collections: {
+                'vecthare_chat_chat_chat-1': { alwaysActive: true },
+            },
+        },
+    },
+    getContext: vi.fn(() => ({})),
+}));
 vi.mock('../core/../../../../utils.js', () => ({
     getStringHash: value => [...String(value)].reduce((sum, char) => sum + char.charCodeAt(0), 0),
     waitUntilCondition: vi.fn(), onlyUnique: vi.fn(),
@@ -24,7 +33,7 @@ vi.mock('../core/core-vector-api.js', () => ({
     purgeVectorIndex: vi.fn(),
 }));
 
-import { queryAndMergeCollections } from '../core/chat-vectorization.js';
+import { queryAndMergeCollections, rearrangeChat } from '../core/chat-vectorization.js';
 
 describe('queryAndMergeCollections multi-query', () => {
     beforeEach(() => queryMultipleCollections.mockReset());
@@ -70,5 +79,22 @@ describe('queryAndMergeCollections multi-query', () => {
         );
         expect(results[0]?.metadata.messageId).toBe(3);
         expect(results[0]?.collectionId).toBe('chat');
+    });
+});
+
+describe('rearrangeChat retrieval timings', () => {
+    it('completes without reranking when no candidates are returned', async () => {
+        globalThis.toastr = { error: vi.fn() };
+        globalThis.window = {};
+        queryMultipleCollections.mockReset();
+        queryMultipleCollections.mockResolvedValue({});
+
+        await expect(rearrangeChat(
+            [{ mes: 'A sufficiently detailed retrieval query' }],
+            { enabled_chats: true, query: 1, top_k: 5, score_threshold: 0 },
+            'normal',
+        )).resolves.toBeUndefined();
+        expect(queryMultipleCollections).toHaveBeenCalledOnce();
+        expect(globalThis.toastr.error).not.toHaveBeenCalled();
     });
 });
