@@ -93,6 +93,11 @@ const defaultSettings = {
     min_chat_length: 0, // Minimum number of messages in chat before injection starts (0 = no minimum)
     // Number of top results to retrieve from vector DB (top-K)
     top_k: 3,
+    // Separate retrieval budgets. candidate_k=null enables adaptive overfetch.
+    candidate_k: null,
+    candidate_k_max: 200,
+    rerank_k: 50,
+    final_k: null, // Falls back to top_k for backwards compatibility.
     query: 2,
     chunk_size: 500, // For adaptive strategy only
     score_threshold: 0.25,
