@@ -4,7 +4,7 @@
  */
 export function resolveRetrievalBudgets(settings = {}) {
     const finalK = Math.max(1, Math.trunc(settings.final_k ?? settings.top_k ?? settings.insert ?? 3));
-    const candidateKMax = Math.max(finalK, Math.trunc(settings.candidate_k_max ?? 200));
+    const candidateKMax = Math.max(finalK, Math.trunc(settings.candidate_k_max ?? 500));
     const adaptiveCandidateK = Math.max(finalK * 4, finalK + 20);
     const candidateK = Math.min(candidateKMax, Math.max(finalK, Math.trunc(settings.candidate_k ?? adaptiveCandidateK)));
     const rerankK = Math.min(candidateKMax, Math.max(finalK, Math.trunc(settings.rerank_k ?? candidateK)));

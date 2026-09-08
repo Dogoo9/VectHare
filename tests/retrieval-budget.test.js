@@ -10,6 +10,11 @@ describe('retrieval budgets', () => {
         expect(resolveRetrievalBudgets({ final_k: 5, candidate_k: 30, rerank_k: 12, candidate_k_max: 80 }))
             .toEqual({ finalK: 5, candidateK: 30, rerankK: 12, candidateKMax: 80 });
         expect(resolveRetrievalBudgets({ top_k: 5 }).candidateK).toBe(25);
+        expect(resolveRetrievalBudgets({ top_k: 500 })).toMatchObject({
+            finalK: 500,
+            candidateK: 500,
+            candidateKMax: 500,
+        });
     });
 
     it('refills when disabled, duplicate, and condition-rejected leaders consume the first prefix', async () => {

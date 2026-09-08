@@ -178,6 +178,35 @@ describe('getSemanticWorldInfoEntries', () => {
         expect(result[0].vectorActivated).toBe(true);
     });
 
+    it('widens the Qdrant query to Max Entries when all entries are enabled', async () => {
+        const settings = {
+            enabled_world_info: true,
+            world_info_enabled_for_all: true,
+            world_info_threshold: 0.3,
+            world_info_top_k: 3,
+            world_info_max_entries: 15,
+            vecthare_collection_registry: ['qdrant:transformers:lorebook_global_test'],
+        };
+        queryCollection.mockResolvedValue({
+            hashes: Array.from({ length: 15 }, (_, index) => index + 1),
+            metadata: Array.from({ length: 15 }, (_, index) => ({
+                uid: index + 1,
+                text: `Entry ${index + 1}`,
+                score: 0.9,
+            })),
+        });
+
+        const entries = await getSemanticWorldInfoEntries(['all fifteen topics'], [], settings);
+
+        expect(queryCollection).toHaveBeenCalledWith(
+            'lorebook_global_test',
+            'all fifteen topics',
+            15,
+            settings,
+        );
+        expect(entries).toHaveLength(15);
+    });
+
     it('should filter entries below threshold', async () => {
         const settings = {
             enabled_world_info: true,
