@@ -18,6 +18,8 @@
 // STATE
 // ============================================================================
 
+import { logger } from '../utils/logger.js';
+
 let lastDebugData = null;
 const queryHistory = []; // Store last N queries
 const MAX_QUERY_HISTORY = 13;
@@ -147,8 +149,7 @@ export function setLastSearchDebug(data) {
         queryHistory.pop();
     }
 
-    console.log('VectHare Debug: Stored search debug data', {
-        query: data.query?.substring(0, 50) + '...',
+    logger.debug('Stored authoritative search debug trace', {
         stages: {
             initial: data.stages.initial.length,
             afterDecay: data.stages.afterDecay.length,
