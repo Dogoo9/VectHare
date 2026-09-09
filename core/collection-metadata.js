@@ -43,7 +43,12 @@ const defaultCollectionMeta = {
         dimension: null,
         distanceMetric: null,
         indexVersion: null,
+        fingerprint: null,
+        compatibility: 'unknown',
     },
+    storageLocator: null,
+    embeddingConnection: null,
+    previousEmbeddingConnection: null,
 
     // =========================================================================
     // ACTIVATION TRIGGERS (PRIMARY METHOD - Like Lorebook)

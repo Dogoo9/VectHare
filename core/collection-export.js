@@ -33,6 +33,7 @@ import {
 } from './collection-loader.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
+import { compareEmbeddingFingerprints, storageSettings } from './collection-portability.js';
 
 // ============================================================================
 // CONSTANTS
@@ -58,6 +59,7 @@ const EXPORT_BATCH_SIZE = 100;
  * @returns {Promise<Array>} Chunks with vectors
  */
 async function fetchChunksWithVectors(collectionId, settings) {
+    settings = storageSettings(settings);
     const backendName = settings.vector_backend || 'standard';
     const response = await fetch('/api/plugins/similharity/chunks/list', {
         method: 'POST',
@@ -417,6 +419,7 @@ export function validateImportData(data, currentSettings = {}) {
     // Check embedding compatibility
     let embeddingInfo = null;
     let compatible = true;
+    let compatibilityStatus = 'compatible';
 
     for (const col of collections) {
         if (!col.collection?.id) {
@@ -438,16 +441,13 @@ export function validateImportData(data, currentSettings = {}) {
 
             if (hasVectors && currentSettings.source) {
                 // Check if current settings match export
-                const sourceMatch = col.embedding.source === currentSettings.source;
-                const modelMatch = !col.embedding.model || !currentSettings.model ||
-                    col.embedding.model === currentSettings.model;
-
-                if (!sourceMatch || !modelMatch) {
+                const comparison = compareEmbeddingFingerprints(col.embedding.fingerprint, currentSettings.embedding_fingerprint);
+                if (comparison.status !== 'compatible') {
                     compatible = false;
+                    compatibilityStatus = comparison.status;
                     warnings.push(
-                        `Embedding mismatch: Export used ${col.embedding.source}/${col.embedding.model || 'default'}, ` +
-                        `but you're using ${currentSettings.source}/${currentSettings.model || 'default'}. ` +
-                        `Switch your settings to match, or vectors will be re-embedded.`
+                        `Embedding compatibility is ${comparison.status}: ${comparison.reason} ` +
+                        'Stored vectors will not be reused; rebuild from exported text.'
                     );
                 }
             }
@@ -459,6 +459,7 @@ export function validateImportData(data, currentSettings = {}) {
         errors,
         warnings,
         compatible,
+        compatibilityStatus,
         embeddingInfo,
         stats: {
             collectionCount: collections.length,
@@ -533,10 +534,10 @@ export async function importCollection(exportData, settings, options = {}) {
     // Check if we can use pre-computed vectors
     const embeddingInfo = exportData.embedding || {};
     const chunksWithVectors = validChunks.filter(c => c.vector && Array.isArray(c.vector));
+    const vectorCompatibility = compareEmbeddingFingerprints(embeddingInfo.fingerprint, settings.embedding_fingerprint);
     const canUseVectors = !options.forceReembed &&
         chunksWithVectors.length === validChunks.length &&
-        embeddingInfo.source === settings.source &&
-        (!embeddingInfo.model || !settings.model || embeddingInfo.model === settings.model);
+        vectorCompatibility.status === 'compatible';
 
     const totalSteps = 4;
     progressTracker.show('Importing Collection', totalSteps, 'Steps');
