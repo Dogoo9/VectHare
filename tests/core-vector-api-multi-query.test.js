@@ -22,6 +22,8 @@ vi.mock('../backends/backend-manager.js', () => ({
 }));
 
 import { queryMultipleCollections } from '../core/core-vector-api.js';
+import { indexLexicalItems, purgeAllLexicalIndexes } from '../core/lexical-index.js';
+import { collectionStorageKey } from '../core/collection-portability.js';
 
 describe('core multi-collection query embedding', () => {
     it('generates a client query embedding once and shares it with the backend operation', async () => {
@@ -40,5 +42,23 @@ describe('core multi-collection query embedding', () => {
         await queryMultipleCollections(['one'], 'needle', 500, 0, { source: 'openai' });
 
         expect(mocks.backendQuery.mock.calls[0][2]).toBe(500);
+    });
+
+    it('uses explicit lexical-only retrieval without embedding or dense requests and honors topK', async () => {
+        purgeAllLexicalIndexes();
+        mocks.embedTexts.mockClear();
+        mocks.backendQuery.mockClear();
+        const settings = { source: 'webllm', retrieval_mode: 'lexical_only' };
+        indexLexicalItems(collectionStorageKey('one', settings), [
+            { hash: 1, text: 'needle needle first' }, { hash: 2, text: 'needle second' },
+        ]);
+
+        const result = await queryMultipleCollections(['one'], 'needle', 1, 0, settings);
+
+        expect(result.one.hashes).toEqual([1]);
+        expect(result.one.metadata[0]).toMatchObject({ retrievalMode: 'lexical-only' });
+        expect(result.one.metadata[0].score).toBeUndefined();
+        expect(mocks.embedTexts).not.toHaveBeenCalled();
+        expect(mocks.backendQuery).not.toHaveBeenCalled();
     });
 });

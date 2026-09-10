@@ -394,3 +394,10 @@ Set `plainMatchMode: 'substring'` on a pattern condition, or
 `plainMatchMode` in `setCollectionTriggers`), for compatibility with the old
 contains behavior. Explicit `/pattern/flags` values continue to be treated as
 regular expressions and are not escaped or boundary-wrapped.
+
+### Portable embedding collections
+
+Collection storage routing can remain fixed while a verified compatible local
+embedding connection is selected. Unknown or incompatible spaces require a
+non-destructive text rebuild, and dense-unavailable collections can explicitly use
+the isolated BM25 index. See [the migration and server-capability guide](docs/portable-embedding-collections.md).

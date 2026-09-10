@@ -15,6 +15,7 @@
 import { getBackend } from '../backends/backend-manager.js';
 import { createBM25Scorer, tokenize } from './bm25-scorer.js';
 import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
+import { collectionStorageKey, storageSettings } from './collection-portability.js';
 
 import { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS, heuristicWeightedFusion } from './fusion-algorithms.js';
 export { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS } from './fusion-algorithms.js';
@@ -39,6 +40,7 @@ function getHeuristicSettings(settings) {
  * @returns {Promise<{hashes: number[], metadata: object[]}>}
  */
 export async function hybridSearch(collectionId, searchText, topK, settings, options = {}) {
+    settings = storageSettings(settings);
     const backend = await getBackend(settings);
 
     const {
@@ -126,13 +128,22 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
 
     // Lexical candidates come from the complete collection index, independently
     // of which documents the dense ANN generator happened to return.
-    let bm25Results = searchLexicalIndex(collectionId, searchText, expandedTopK, {
+    const lexicalId = collectionStorageKey(collectionId, settings);
+    let bm25Results = searchLexicalIndex(lexicalId, searchText, expandedTopK, {
         k1: settings.bm25_k1 || 1.5,
         b: settings.bm25_b || 0.75
     });
+    // Read legacy bare-ID indexes until the collection is next written and
+    // migrated to its collision-safe physical key.
+    if (loadLexicalIndex(lexicalId).documentCount === 0) {
+        bm25Results = searchLexicalIndex(collectionId, searchText, expandedTopK, {
+            k1: settings.bm25_k1 || 1.5,
+            b: settings.bm25_b || 0.75
+        });
+    }
     // Existing collections created before the index was introduced remain
     // searchable until their next vectorization builds the complete index.
-    if (loadLexicalIndex(collectionId).documentCount === 0 && vectorResults.metadata.length) {
+    if (loadLexicalIndex(lexicalId).documentCount === 0 && loadLexicalIndex(collectionId).documentCount === 0 && vectorResults.metadata.length) {
         const denseDocuments = vectorResults.metadata.map((meta, idx) => ({
             hash: vectorResults.hashes[idx], text: meta.text || '', score: meta.score || 0, metadata: meta
         }));
