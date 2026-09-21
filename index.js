@@ -7,7 +7,7 @@
  * All chunk operations go through unified /chunks/* endpoints.
  * Backend is specified via `backend` parameter in request body.
  *
- * @version 3.2.0
+ * @version 3.2.1
  */
 
 import path from 'node:path';
@@ -20,7 +20,7 @@ import qdrantBackend from './qdrant-backend.js';
 import milvusBackend from './milvus-backend.js';
 
 const pluginName = 'similharity';
-const pluginVersion = '3.2.0';
+const pluginVersion = '3.2.1';
 
 /**
  * Initialize the plugin
@@ -418,7 +418,7 @@ export async function init(router) {
                     },
 
                     delete: async (collectionId, hashes, source, model, directories, filters = {}) => {
-                        await qdrantBackend.deleteVectors(collectionId, hashes);
+                        await qdrantBackend.deleteVectors(collectionId, hashes, filters);
                         return hashes.length;
                     },
 
@@ -428,7 +428,11 @@ export async function init(router) {
                     },
 
                     purge: async (collectionId, source, model, directories, filters = {}) => {
-                        await qdrantBackend.purgeAll(collectionId, filters);
+                        if (Object.keys(filters).length > 0) {
+                            await qdrantBackend.purgeCollection(collectionId, filters);
+                        } else {
+                            await qdrantBackend.purgeAll(collectionId);
+                        }
                     },
 
                     stats: async (collectionId, source, model, directories, filters = {}) => {
