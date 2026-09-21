@@ -7,7 +7,7 @@
  * All chunk operations go through unified /chunks/* endpoints.
  * Backend is specified via `backend` parameter in request body.
  *
- * @version 3.3.0
+ * @version 3.2.1
  */
 
 import path from 'node:path';
@@ -43,7 +43,7 @@ async function loadMilvusBackend() {
 }
 
 const pluginName = 'similharity';
-const pluginVersion = '3.3.0';
+const pluginVersion = '3.2.1';
 
 /**
  * Initialize the plugin

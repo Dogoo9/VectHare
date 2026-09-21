@@ -1,6 +1,6 @@
 # Similharity Server Plugin
 
-**Version 3.3.0**
+**Version 3.2.1**
 
 Server-side plugin for [the VectHare](https://github.com/Conejachibi/VectHare) extension that provides enhanced vector database backends and full metadata storage capabilities.
 
@@ -121,7 +121,7 @@ Returns plugin status and capabilities.
 {
   "status": "ok",
   "plugin": "similharity",
-  "version": "3.3.0",
+  "version": "3.2.1",
   "features": [
     "vectra-full-metadata",
     "lancedb",
