@@ -17,14 +17,56 @@ export function nextCandidateK(current, maximum) {
     return Math.min(maximum, Math.max(current + 1, current * 2));
 }
 
-/** Sort and enforce the output budget only after every ranking stage has run. */
+function normalizedChunkText(chunk) {
+    return String(chunk?.text ?? chunk?.metadata?.text ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** Return every identity which proves that two hits are the same stored chunk. */
+function chunkIdentityKeys(chunk) {
+    const metadata = chunk?.metadata || {};
+    const collectionId = String(chunk?.collectionId ?? metadata.collectionId ?? '');
+    const keys = [];
+    const hash = chunk?.hash ?? metadata.hash;
+    if (hash !== undefined && hash !== null && hash !== '') keys.push(`hash:${collectionId}:${hash}`);
+
+    // Some backends re-hash a row while editing it, so identical content is
+    // still a duplicate even when the returned hashes differ.
+    const text = normalizedChunkText(chunk);
+    if (text) keys.push(`text:${collectionId}:${text}`);
+
+    // A source coordinate catches stale pre-edit and current post-edit rows.
+    // Only use an index explicitly supplied in metadata; the retrieval layer's
+    // synthesized index=0 fallback is not a safe identity.
+    for (const field of ['chunkId', 'messageId']) {
+        if (metadata[field] !== undefined && metadata[field] !== null && metadata[field] !== '') {
+            keys.push(`source:${collectionId}:${field}:${metadata[field]}`);
+            break;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(metadata, 'index') && metadata.index !== null) {
+        keys.push(`source:${collectionId}:index:${metadata.index}`);
+    }
+    return keys;
+}
+
+/** Sort, remove duplicate backend rows, and enforce the output budget. */
 export function selectFinalChunks(chunks, finalK) {
-    return [...chunks].sort((a, b) => {
+    const ranked = [...chunks].sort((a, b) => {
         // Exact keyword activations are authoritative. Put them ahead of
         // semantic 100% ties so backend ordering cannot cost them a slot.
         const keywordPriority = Number(Boolean(b.keywordForceInjected)) - Number(Boolean(a.keywordForceInjected));
         return keywordPriority || (b.score ?? 0) - (a.score ?? 0);
-    }).slice(0, finalK);
+    });
+    const selected = [];
+    const seen = new Set();
+    for (const chunk of ranked) {
+        const identities = chunkIdentityKeys(chunk);
+        if (identities.some(identity => seen.has(identity))) continue;
+        identities.forEach(identity => seen.add(identity));
+        selected.push(chunk);
+        if (selected.length >= finalK) break;
+    }
+    return selected;
 }
 
 /**

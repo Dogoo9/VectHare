@@ -62,4 +62,24 @@ describe('retrieval budgets', () => {
 
         expect(selectFinalChunks(candidates, 1).map(c => c.id)).toEqual(['keyword']);
     });
+
+    it('does not spend injection slots on duplicate backend rows', () => {
+        const candidates = [
+            { id: 'best', hash: 10, text: 'Useful context', collectionId: 'docs', score: .9 },
+            { id: 'duplicate', hash: 10, text: 'Useful context', collectionId: 'docs', score: .8 },
+            { id: 'next', hash: 11, text: 'Different context', collectionId: 'docs', score: .7 },
+        ];
+
+        expect(selectFinalChunks(candidates, 2).map(c => c.id)).toEqual(['best', 'next']);
+    });
+
+    it('keeps only the best version of an edited source chunk', () => {
+        const candidates = [
+            { id: 'edited', hash: 20, text: 'New text', collectionId: 'docs', score: .95, metadata: { index: 3 } },
+            { id: 'stale', hash: 19, text: 'Old text', collectionId: 'docs', score: .8, metadata: { index: 3 } },
+            { id: 'other', hash: 21, text: 'Another chunk', collectionId: 'docs', score: .7, metadata: { index: 4 } },
+        ];
+
+        expect(selectFinalChunks(candidates, 2).map(c => c.id)).toEqual(['edited', 'other']);
+    });
 });
