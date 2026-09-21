@@ -56,9 +56,21 @@ SillyTavern/
 
 Check console for:
 ```
-[similharity] Initializing v3.0.0...
+[similharity] Initializing v3.3.0...
 [similharity] Plugin initialized successfully
 ```
+
+Verify that VectHare can detect full discovery support by opening this URL while
+logged in to SillyTavern:
+
+```text
+http://localhost:8000/api/plugins/similharity/health
+```
+
+The response includes `"success": true`, `"available": true`, and the
+`filesystem-discovery` capability. If VectHare still shows **Limited Discovery
+Mode**, confirm that `enableServerPlugins: true` is set, run `npm install` in
+`plugins/similharity`, and restart SillyTavern (not only the browser tab).
 
 ---
 
@@ -429,6 +441,29 @@ Returns statistics for a collection.
 ## Qdrant Backend
 
 **Multitenancy Support:** Qdrant uses a single collection with payload filters to separate data from different sources (chat/character/global).
+
+### Migrate Legacy Point IDs
+
+Version 3.3 uses tenant-aware Qdrant point IDs. Preview migration of points
+created by older releases:
+
+```http
+POST /api/plugins/similharity/backend/migrate/qdrant
+Content-Type: application/json
+
+{ "collectionId": "vecthare_main", "dryRun": true }
+```
+
+After reviewing the returned counts, rerun with `"dryRun": false`. The command
+is idempotent: it copies legacy points to tenant-aware IDs before removing their
+old hash-only IDs.
+
+### Qdrant Integration Tests
+
+Run the normal mocked regression suite with `npm test`. To additionally exercise
+a real disposable Qdrant collection, set `QDRANT_TEST_URL` (and optionally
+`QDRANT_TEST_API_KEY`) before running the same command. The integration test is
+skipped when no test server is configured.
 
 ### Initialize
 

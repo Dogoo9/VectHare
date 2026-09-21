@@ -549,7 +549,7 @@ export class QdrantBackend {
             }));
         } catch (error) {
             console.error(`[Qdrant] Query failed for ${mainCollection}:`, error.message);
-            return [];
+            throw error;
         }
     }
 
@@ -792,7 +792,7 @@ export class QdrantBackend {
 
         } catch (error) {
             console.error(`[Qdrant] Hybrid query failed for ${mainCollection}:`, error.message);
-            return [];
+            throw error;
         }
     }
 
@@ -946,7 +946,7 @@ export class QdrantBackend {
             return items;
         } catch (error) {
             console.error(`[Qdrant] Failed to list items from ${mainCollection}:`, error.message);
-            return [];
+            throw error;
         }
     }
 
@@ -1014,7 +1014,7 @@ export class QdrantBackend {
             return hashes;
         } catch (error) {
             console.error(`[Qdrant] Failed to get hashes from ${mainCollection}:`, error.message);
-            return [];
+            throw error;
         }
     }
 
@@ -1048,6 +1048,62 @@ export class QdrantBackend {
             console.error(`[Qdrant] Delete failed for ${mainCollection}:`, error.message);
             throw error;
         }
+    }
+
+    /**
+     * Re-key legacy hash-ID points to tenant-aware IDs. This is idempotent and
+     * can be previewed without writing by passing dryRun=true.
+     */
+    async migrateLegacyPointIds(collectionName = 'vecthare_main', { dryRun = true } = {}) {
+        if (!this.baseUrl) throw new Error('Qdrant not initialized');
+        const mainCollection = this._parseCollectionName(collectionName);
+        const collections = await this._request('GET', '/collections');
+        if (!collections.result?.collections?.some(collection => collection.name === mainCollection)) {
+            return { collection: mainCollection, scanned: 0, migrated: 0, dryRun };
+        }
+
+        let offset = null;
+        let scanned = 0;
+        const legacyPoints = [];
+        do {
+            const body = { limit: 256, with_payload: true, with_vector: true };
+            if (offset !== null) body.offset = offset;
+            const response = await this._request('POST', `/collections/${mainCollection}/points/scroll`, body);
+            const points = response.result?.points || [];
+            scanned += points.length;
+            for (const point of points) {
+                const payload = point.payload || {};
+                if (payload.hash === undefined || payload.hash === null) continue;
+                const expectedId = this._getPointId(payload.hash, payload);
+                if (String(point.id).toLowerCase() !== expectedId) {
+                    legacyPoints.push({ ...point, expectedId });
+                }
+            }
+            offset = response.result?.next_page_offset;
+        } while (offset !== null && offset !== undefined);
+
+        if (!dryRun && legacyPoints.length > 0) {
+            for (let index = 0; index < legacyPoints.length; index += 100) {
+                const batch = legacyPoints.slice(index, index + 100);
+                await this._request('PUT', `/collections/${mainCollection}/points?wait=true`, {
+                    points: batch.map(point => ({
+                        id: point.expectedId,
+                        vector: point.vector,
+                        payload: point.payload,
+                    })),
+                });
+                await this._request('POST', `/collections/${mainCollection}/points/delete?wait=true`, {
+                    points: batch.map(point => point.id),
+                });
+            }
+        }
+
+        return {
+            collection: mainCollection,
+            scanned,
+            migrated: legacyPoints.length,
+            dryRun,
+        };
     }
 
     /**
@@ -1142,7 +1198,7 @@ export class QdrantBackend {
             return collections.result?.collections?.map(c => c.name) || [];
         } catch (error) {
             console.error(`[Qdrant] getCollections failed:`, error.message);
-            return [];
+            throw error;
         }
     }
 
@@ -1196,7 +1252,7 @@ export class QdrantBackend {
             };
         } catch (error) {
             console.error(`[Qdrant] getItem failed:`, error.message);
-            return null;
+            throw error;
         }
     }
 
@@ -1354,18 +1410,7 @@ export class QdrantBackend {
             };
         } catch (error) {
             console.error(`[Qdrant] getCollectionStats failed:`, error.message);
-            return {
-                chunkCount: 0,
-                totalCharacters: 0,
-                totalTokens: 0,
-                storageSize: 0,
-                embeddingDimensions: 0,
-                avgChunkSize: 0,
-                messageCount: 0,
-                sources: {},
-                backend: 'qdrant',
-                error: error.message,
-            };
+            throw error;
         }
     }
 
@@ -1415,7 +1460,7 @@ export class QdrantBackend {
             return (response.result?.points?.length || 0) > 0;
         } catch (error) {
             console.error(`[Qdrant] chunkExists failed:`, error.message);
-            return false;
+            throw error;
         }
     }
 }

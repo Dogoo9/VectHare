@@ -15,9 +15,32 @@ import fs from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import sanitize from 'sanitize-filename';
 import vectra from 'vectra';
-import lancedbBackend from './lancedb-backend.js';
 import qdrantBackend from './qdrant-backend.js';
-import milvusBackend from './milvus-backend.js';
+
+let lancedbBackend;
+let milvusBackend;
+
+async function loadLanceDBBackend() {
+    if (!lancedbBackend) {
+        try {
+            ({ default: lancedbBackend } = await import('./lancedb-backend.js'));
+        } catch (error) {
+            throw new Error(`LanceDB backend is unavailable. Run npm install in the Similharity plugin directory. ${error.message}`, { cause: error });
+        }
+    }
+    return lancedbBackend;
+}
+
+async function loadMilvusBackend() {
+    if (!milvusBackend) {
+        try {
+            ({ default: milvusBackend } = await import('./milvus-backend.js'));
+        } catch (error) {
+            throw new Error(`Milvus backend is unavailable. Run npm install in the Similharity plugin directory. ${error.message}`, { cause: error });
+        }
+    }
+    return milvusBackend;
+}
 
 const pluginName = 'similharity';
 const pluginVersion = '3.2.1';
@@ -38,13 +61,16 @@ export async function init(router) {
      * @param {object} directories - User directories containing vectors path
      */
     async function ensureLanceDBInitialized(directories) {
+        await loadLanceDBBackend();
         if (!lancedbBackend.basePath) {
             console.log(`[${pluginName}] Auto-initializing LanceDB backend...`);
             await lancedbBackend.initialize(directories.vectors);
         }
     }
 
-    function getBackendHandler(backend) {
+    async function getBackendHandler(backend) {
+        if (backend === 'lancedb') await loadLanceDBBackend();
+        if (backend === 'milvus') await loadMilvusBackend();
         switch (backend) {
             case 'vectra':
             case 'standard':
@@ -533,10 +559,14 @@ export async function init(router) {
      */
     router.get('/health', (req, res) => {
         res.json({
+            success: true,
+            available: true,
             status: 'ok',
             plugin: pluginName,
+            id: pluginName,
             version: pluginVersion,
-            backends: ['vectra', 'lancedb', 'qdrant', 'milvus']
+            backends: ['vectra', 'lancedb', 'qdrant', 'milvus'],
+            features: ['filesystem-discovery', 'collection-browser', 'vectra-full-metadata', 'lancedb', 'qdrant', 'milvus']
         });
     });
 
@@ -689,6 +719,7 @@ export async function init(router) {
                     break;
 
                 case 'lancedb':
+                    await loadLanceDBBackend();
                     if (!lancedbBackend.basePath) {
                         await lancedbBackend.initialize(req.user.directories.vectors);
                     }
@@ -702,6 +733,7 @@ export async function init(router) {
                     break;
 
                 case 'milvus':
+                    await loadMilvusBackend();
                     healthy = await milvusBackend.healthCheck();
                     message = healthy ? 'Milvus connected' : 'Milvus not available';
                     break;
@@ -734,6 +766,7 @@ export async function init(router) {
                     break;
 
                 case 'lancedb':
+                    await loadLanceDBBackend();
                     await lancedbBackend.initialize(req.user.directories.vectors);
                     res.json({ success: true, message: 'LanceDB initialized' });
                     break;
@@ -744,6 +777,7 @@ export async function init(router) {
                     break;
 
                 case 'milvus':
+                    await loadMilvusBackend();
                     await milvusBackend.initialize(config);
                     res.json({ success: true, message: 'Milvus initialized' });
                     break;
@@ -755,6 +789,23 @@ export async function init(router) {
         } catch (error) {
             console.error(`[${pluginName}] backend/init error:`, error);
             res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/plugins/similharity/backend/migrate/qdrant
+     * Preview or migrate legacy hash-only Qdrant point IDs.
+     * Body: { collectionId?, dryRun? }. dryRun defaults to true.
+     */
+    router.post('/backend/migrate/qdrant', async (req, res) => {
+        try {
+            const collectionId = req.body?.collectionId || 'vecthare_main';
+            const dryRun = req.body?.dryRun !== false;
+            const result = await qdrantBackend.migrateLegacyPointIds(collectionId, { dryRun });
+            res.json({ success: true, ...result });
+        } catch (error) {
+            console.error(`[${pluginName}] Qdrant migration error:`, error);
+            res.status(500).json({ success: false, error: error.message });
         }
     });
 
@@ -1003,7 +1054,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const result = await handler.list(collectionId, source, model, req.user.directories, {
                 offset,
                 limit,
@@ -1051,7 +1102,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const chunk = await handler.get(collectionId, hash, source, model, req.user.directories, filters);
 
             if (!chunk) {
@@ -1093,7 +1144,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             await handler.insert(collectionId, items, source, model, req.user.directories, req, filters);
 
             res.json({
@@ -1134,7 +1185,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const result = await handler.updateText(collectionId, hash, text, source, model, req.user.directories, req, filters);
 
             res.json({
@@ -1174,7 +1225,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const result = await handler.updateMetadata(collectionId, hash, metadata, source, model, req.user.directories, filters);
 
             res.json({
@@ -1216,7 +1267,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const deleted = await handler.delete(collectionId, hashes, source, model, req.user.directories, filters);
 
             res.json({
@@ -1269,7 +1320,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 vector = await getEmbeddingForSource(source, searchText, model, req.user.directories, req);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const results = await handler.query(collectionId, vector, topK, threshold, source, model, req.user.directories, {
                 includeVectors,
                 filters
@@ -1372,6 +1423,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 });
             } else if (backend === 'milvus') {
                 // Milvus hybrid query implementation (if available)
+                await loadMilvusBackend();
                 const results = await milvusBackend.hybridQuery(
                     collectionId,
                     vector,
@@ -1427,7 +1479,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             await handler.purge(collectionId, source, model, req.user.directories, filters);
 
             res.json({
@@ -1538,7 +1590,7 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 await ensureLanceDBInitialized(req.user.directories);
             }
 
-            const handler = getBackendHandler(backend);
+            const handler = await getBackendHandler(backend);
             const stats = await handler.stats(collectionId, source, model, req.user.directories, filters);
 
             res.json({
@@ -1758,6 +1810,7 @@ async function scanAllSourcesForCollections(vectorsPath) {
         const lancedbPath = path.join(vectorsPath, 'lancedb');
         try {
             await fs.access(lancedbPath);
+            await loadLanceDBBackend();
             if (!lancedbBackend.basePath) {
                 await lancedbBackend.initialize(vectorsPath);
             }
@@ -1803,7 +1856,6 @@ async function scanAllSourcesForCollections(vectorsPath) {
                 if (healthy) {
                     // List items from vecthare_main collection
                     const collections = await qdrantBackend.getCollections();
-                    const hasVecthareMain = collections.some(col => col.name === 'vecthare_main'); //just-in-case support for multitenancy?
 
                     for (const collectionName of collections) {
                         const items = await qdrantBackend.listItems(collectionName, {});
@@ -1839,7 +1891,7 @@ async function scanAllSourcesForCollections(vectorsPath) {
 
         // Scan Milvus
         try {
-            if (milvusBackend.isConnected) {
+            if (milvusBackend?.isConnected) {
                 const items = await milvusBackend.listItems('vecthare_main', {}, { limit: 1 });
                 if (items.length > 0) {
                     const stats = await milvusBackend.getCollectionStats('vecthare_main');
