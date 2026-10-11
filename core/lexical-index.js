@@ -15,8 +15,30 @@ function key(collectionId) {
     return `${STORAGE_PREFIX}${encodeURIComponent(collectionId)}`;
 }
 
+function dictionary(value) {
+    // Terms and hashes are arbitrary strings, including "constructor" and
+    // "__proto__". They must never resolve to inherited Object properties.
+    return Object.assign(Object.create(null), value);
+}
+
 function emptyIndex() {
-    return { version: 1, documentCount: 0, documentLengths: {}, documentFrequencies: {}, postings: {}, documents: {} };
+    return {
+        version: 1, documentCount: 0,
+        documentLengths: dictionary(), documentFrequencies: dictionary(),
+        postings: dictionary(), documents: dictionary(),
+    };
+}
+
+function restoreDictionaries(index) {
+    // JSON parsing restores Object.prototype, so apply this on every load as
+    // well as when creating a fresh index. The persisted format stays the same.
+    for (const field of ['documentLengths', 'documentFrequencies', 'postings', 'documents']) {
+        index[field] = dictionary(index[field]);
+    }
+    for (const term of Object.keys(index.postings)) {
+        index.postings[term] = dictionary(index.postings[term]);
+    }
+    return index;
 }
 
 export function loadLexicalIndex(collectionId) {
@@ -24,7 +46,7 @@ export function loadLexicalIndex(collectionId) {
     if (persistent) {
         try {
             const value = persistent.getItem(key(collectionId));
-            if (value) return JSON.parse(value);
+            if (value) return restoreDictionaries(JSON.parse(value));
         } catch (error) {
             console.warn('[LexicalIndex] Could not load persisted index:', error);
         }
@@ -70,13 +92,13 @@ export function indexLexicalItems(collectionId, items) {
         const id = String(item.hash);
         const text = typeof item.text === 'string' ? item.text : '';
         const tokens = tokenizeSimple(text);
-        const frequencies = {};
+        const frequencies = dictionary();
         for (const token of tokens) frequencies[token] = (frequencies[token] || 0) + 1;
         index.documents[id] = { ...item, hash: item.hash, text };
         index.documentLengths[id] = tokens.length;
         index.documentCount++;
         for (const [term, frequency] of Object.entries(frequencies)) {
-            index.postings[term] ||= {};
+            index.postings[term] ||= dictionary();
             index.postings[term][id] = frequency;
             index.documentFrequencies[term] = (index.documentFrequencies[term] || 0) + 1;
         }

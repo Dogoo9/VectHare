@@ -103,8 +103,9 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         heuristicSettings
     } = options;
 
-    // Fetch more results for fusion (need candidates from both methods)
-    const expandedTopK = Math.min(topK * 3, 100);
+    // Fetch more results for fusion without shrinking an explicit candidate
+    // request. Adaptive retrieval may request more than the usual overfetch cap.
+    const expandedTopK = Math.max(topK, Math.min(topK * 3, 100));
 
     // 1. Vector search
     console.log(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);

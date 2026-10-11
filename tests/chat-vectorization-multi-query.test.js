@@ -89,6 +89,17 @@ describe('authoritative keyword activation', () => {
 describe('queryAndMergeCollections multi-query', () => {
     beforeEach(() => queryMultipleCollections.mockReset());
 
+    it('queries and merges a repeated collection only once after an edit', async () => {
+        queryMultipleCollections.mockResolvedValue({
+            notes: { hashes: [1], metadata: [{ text: 'Edited entry', score: 0.9 }] },
+        });
+        const results = await queryAndMergeCollections(
+            ['notes', 'notes'], 'query', { top_k: 5 }, [], { trace: [], chunkFates: {} },
+        );
+        expect(queryMultipleCollections.mock.calls[0][0]).toEqual(['notes']);
+        expect(results).toHaveLength(1);
+    });
+
     it('uses one multi-collection call and retains source collection metadata', async () => {
         queryMultipleCollections.mockResolvedValue({
             first: { hashes: [1], metadata: [{ text: 'one', score: 0.9 }] },
@@ -168,6 +179,25 @@ describe('queryAndMergeCollections multi-query', () => {
 });
 
 describe('rearrangeChat retrieval timings', () => {
+    it('gathers a collection once when the registry contains both discovered and edit-created aliases', async () => {
+        globalThis.toastr = { error: vi.fn() };
+        globalThis.window = {};
+        const settings = extension_settings.vecthare;
+        settings.vecthare_collection_registry = ['qdrant:openai:notes', 'notes'];
+        settings.collections.notes = { alwaysActive: true };
+        queryMultipleCollections.mockReset();
+        queryMultipleCollections.mockResolvedValue({});
+
+        try {
+            await rearrangeChat([{ mes: 'Search for the edited entry' }], { query: 1, top_k: 5 }, 'normal');
+            const ids = queryMultipleCollections.mock.calls[0][0];
+            expect(ids.filter(id => id === 'notes')).toHaveLength(1);
+        } finally {
+            settings.vecthare_collection_registry = [];
+            delete settings.collections.notes;
+        }
+    });
+
     it('completes without reranking when no candidates are returned', async () => {
         globalThis.toastr = { error: vi.fn() };
         globalThis.window = {};

@@ -51,6 +51,22 @@ export function getCollectionRegistry() {
     return extension_settings.vecthare.vecthare_collection_registry;
 }
 
+/** Resolve legacy aliases only when there is one matching physical namespace. */
+function resolveRegistryAlias(collectionId, registry) {
+    const parsed = parseRegistryKey(collectionId);
+    if (parsed.backend) return collectionId;
+
+    const matches = new Set(registry.filter(key => {
+        const candidate = parseRegistryKey(key);
+        return candidate.backend && candidate.source
+            && candidate.collectionId === parsed.collectionId
+            && (!parsed.source || candidate.source === parsed.source);
+    }));
+    // Bare IDs cannot distinguish collections on different backends/providers.
+    // Leave ambiguous aliases intact rather than choosing an arbitrary target.
+    return matches.size === 1 ? [...matches][0] : collectionId;
+}
+
 /**
  * Registers a collection in the registry (idempotent)
  * @param {string} collectionId Collection identifier
@@ -61,11 +77,14 @@ export function registerCollection(collectionId) {
         return;
     }
     const registry = getCollectionRegistry();
-    if (!registry.includes(collectionId)) {
-        registry.push(collectionId);
-        console.log(`VectHare: Registered collection: ${collectionId}`);
+    const registryKey = resolveRegistryAlias(collectionId, registry);
+    if (!registry.includes(registryKey)) {
+        registry.push(registryKey);
+        console.log(`VectHare: Registered collection: ${registryKey}`);
         saveSettingsDebounced(); // Persist to disk!
     }
+    // A newly discovered scoped key may resolve a previously bare registration.
+    cleanupCollectionRegistry();
 }
 
 /**
@@ -181,7 +200,8 @@ export function clearCollectionRegistry() {
  */
 export function cleanupCollectionRegistry() {
     const registry = getCollectionRegistry();
-    const cleaned = [...new Set(registry.filter(id => id != null && id !== ''))];
+    const valid = registry.filter(id => id != null && id !== '');
+    const cleaned = [...new Set(valid.map(id => resolveRegistryAlias(id, valid)))];
     extension_settings.vecthare.vecthare_collection_registry = cleaned;
     const removed = registry.length - cleaned.length;
     if (removed > 0) {

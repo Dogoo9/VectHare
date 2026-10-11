@@ -117,6 +117,35 @@ describe('AsyncUtils', () => {
     });
 
     describe('timeout', () => {
+        afterEach(() => vi.useRealTimers());
+
+        it.each(['resolve', 'reject'])('clears the timer when the operation settles by %s', async outcome => {
+            vi.useFakeTimers();
+            const error = new Error('Embedding failed');
+            const operation = outcome === 'resolve' ? Promise.resolve('done') : Promise.reject(error);
+            const result = AsyncUtils.timeout(operation, 600000);
+
+            if (outcome === 'resolve') {
+                await expect(result).resolves.toBe('done');
+            } else {
+                await expect(result).rejects.toBe(error);
+            }
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it('cleans up after a timeout and handles a later operation rejection', async () => {
+            vi.useFakeTimers();
+            let rejectOperation;
+            const operation = new Promise((_, reject) => { rejectOperation = reject; });
+            const result = AsyncUtils.timeout(operation, 50, 'Embedding timed out');
+            const assertion = expect(result).rejects.toThrow('Embedding timed out');
+            await vi.advanceTimersByTimeAsync(50);
+            await assertion;
+            rejectOperation(new Error('Late failure'));
+            await Promise.resolve();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
         it('should resolve if promise completes in time', async () => {
             const promise = Promise.resolve('done');
             const result = await AsyncUtils.timeout(promise, 100);

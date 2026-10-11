@@ -632,6 +632,23 @@ describe('hybridSearch', () => {
         expect(shared.score).toBeGreaterThan(results.metadata.find(result => result.hash === 1).score);
     });
 
+    it('honors candidate requests above 100 for dense and lexical retrieval', async () => {
+        const items = Array.from({ length: 250 }, (_, i) => ({ hash: i, text: 'needle' }));
+        indexLexicalItems('large-candidates', items);
+        mockBackend.queryCollection.mockImplementation(async (_id, _query, limit) => ({
+            hashes: items.slice(0, limit).map(item => item.hash),
+            metadata: items.slice(0, limit).map(item => ({ ...item, score: 0.8 })),
+        }));
+
+        const denseResults = await hybridSearch('large-candidates', 'needle', 200, {});
+        expect(mockBackend.queryCollection.mock.calls[0][2]).toBe(200);
+        expect(denseResults.hashes).toHaveLength(200);
+
+        mockBackend.queryCollection.mockResolvedValue({ hashes: [], metadata: [] });
+        const lexicalResults = await hybridSearch('large-candidates', 'needle', 200, {});
+        expect(lexicalResults.hashes).toHaveLength(200);
+    });
+
     it('should return empty results when vector query fails', async () => {
         mockBackend.queryCollection.mockRejectedValue(new Error('Query failed'));
 

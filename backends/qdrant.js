@@ -329,7 +329,9 @@ export class QdrantBackend extends VectorBackend {
         try {
             // Dynamic import to avoid circular dependency
             const { registerCollection } = await import('../core/collection-loader.js');
-            registerCollection(collectionId);
+            // Discovery uses backend:source:id. Edits reinsert with a bare ID;
+            // registering that ID separately makes the same collection searchable twice.
+            registerCollection(`${BACKEND_TYPE}:${settings.source || 'transformers'}:${strippedCollectionId}`);
         } catch (e) {
             console.warn('VectHare: Failed to register collection after Qdrant insert:', e);
         }
