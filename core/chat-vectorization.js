@@ -664,7 +664,9 @@ function gatherCollectionsToQuery(settings) {
         }
     }
 
-    return applyChatCollectionPolicy(collectionsToQuery, currentChatId);
+    // Discovered registry keys and legacy/edit-created aliases may resolve to
+    // the same API ID. Query that collection once even before registry cleanup.
+    return applyChatCollectionPolicy([...new Set(collectionsToQuery)], currentChatId);
 }
 
 /**
@@ -693,6 +695,7 @@ function buildSearchQuery(chat, settings) {
  * @returns {Promise<object[]>} Array of chunk objects with scores
  */
 export async function queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData) {
+    activeCollections = [...new Set(activeCollections)];
     const totalStart = performance.now();
     let chunksForVisualizer = [];
     const collectionResultLists = [];
