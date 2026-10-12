@@ -295,6 +295,8 @@ export function setCollectionMeta(collectionId, data) {
     const key = resolveStoredCollectionKey(collectionId) || collectionId;
     const existing = extension_settings.vecthare.collections[key] || {};
     const migration = data.migration || existing.migration;
+    const importState = data.importState || existing.importState;
+    if (data.enabled && importState && importState.status !== "ready") throw new Error("An unverified import target cannot be activated.");
     if (data.enabled && migration && !["ready", "active"].includes(migration.status)) throw new Error("An unverified migration target cannot be activated.");
 
     extension_settings.vecthare.collections[key] = {
@@ -356,7 +358,7 @@ export function setCollectionEnabled(collectionId, enabled) {
  */
 export function isCollectionEnabled(collectionId) {
     const meta = getCollectionMeta(collectionId);
-    return meta.enabled !== false && (!meta.migration || ["ready", "active"].includes(meta.migration.status));
+    return meta.enabled !== false && (!meta.importState || meta.importState.status === "ready") && (!meta.migration || ["ready", "active"].includes(meta.migration.status));
 }
 
 // ============================================================================
@@ -684,7 +686,7 @@ export function cleanupOrphanedMeta(actualCollectionIds) {
     const orphaned = [];
 
     for (const collectionId in extension_settings.vecthare.collections) {
-        if (!actualSet.has(collectionId) && !extension_settings.vecthare.collections[collectionId]?.migration) {
+        if (!actualSet.has(collectionId) && !extension_settings.vecthare.collections[collectionId]?.migration && !extension_settings.vecthare.collections[collectionId]?.importState) {
             orphaned.push(collectionId);
         }
     }
@@ -1121,7 +1123,7 @@ export async function shouldCollectionActivate(collectionId, context) {
     };
 
     // Priority 1: Check if collection is disabled entirely
-    if (meta.enabled === false || (meta.migration && !["ready", "active"].includes(meta.migration.status))) {
+    if (meta.enabled === false || (meta.importState && meta.importState.status !== "ready") || (meta.migration && !["ready", "active"].includes(meta.migration.status))) {
         console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ DISABLED`);
         recordDecision('skipped', 'Collection is disabled');
         return false;

@@ -216,6 +216,7 @@ export class MilvusBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: 'vecthare_main', // Always use main collection
                 items: items.map(item => ({
                     hash: item.hash,
@@ -280,6 +281,7 @@ export class MilvusBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: 'vecthare_main',
                 searchText: searchText,
                 ...(queryVector ? { queryVector } : {}),
@@ -323,6 +325,7 @@ export class MilvusBackend extends VectorBackend {
                     headers: getRequestHeaders(),
                     body: JSON.stringify({
                         backend: BACKEND_TYPE,
+                        ...settings.inference_request_args,
                         collectionId: 'vecthare_main',
                         searchText: searchText,
                         topK: topK,
@@ -476,6 +479,7 @@ export class MilvusBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: 'vecthare_main',
                 text: newText,
                 source: settings.source || 'transformers',
@@ -582,6 +586,7 @@ export class MilvusBackend extends VectorBackend {
 
         const body = {
             backend: BACKEND_TYPE,
+            ...settings.inference_request_args,
             collectionId: 'vecthare_main',
             searchText: searchText,
             topK: topK,

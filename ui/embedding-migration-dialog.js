@@ -80,10 +80,11 @@ export function openEmbeddingMigrationDialog(collection, settings, onChanged = (
         for (const name of ['rebuild', 'test', 'switch', 'source', 'endpoint', 'model', 'fingerprint', 'target', 'lexical', 'dense', 'connection-rollback', 'cutover', 'rollback']) el(name).disabled = true;
         el('cancel').disabled = false;
         try {
+            status('Rebuild started: reading original chunks and checking the new target. It stays disabled until verification completes.');
             const result = await migrateEmbeddingCollection({ key, locator, settings, candidate: profile, targetId,
                 signal: controller.signal, confirmed: true, onProgress: p => status(`Rebuilt ${p.written}/${p.total}. Verifying before activation...`) });
             targetKey = result.targetKey; sourceKey = key;
-            status(`Verified ${result.written} chunks. New collection is disabled. Choose activation switch when ready.`);
+            status(`Verified ${result.written} chunks in ${result.targetLocator.collectionId}. New collection is disabled. Choose activation switch when ready.`);
             el('cutover').disabled = false; onChanged();
         } finally {
             controller = null; el('cancel').disabled = true;

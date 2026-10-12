@@ -87,6 +87,28 @@ external writers during rebuilding: the current server contracts provide neither
 cross-client snapshot isolation nor atomic target reservation. Session write guards
 cannot control external clients.
 
+## Restoring a JSON backup safely
+
+Database Browser import always creates a **new disabled copy** with a generated ID.
+It never overwrites or purges the backup's original destination. Complete saved
+fingerprints and probes are required to reuse vectors; otherwise the backup must
+contain recoverable text and is re-embedded with the currently selected provider.
+Disk/settings collisions are rejected, unfinished/failed copies remain disabled,
+and complete count/identifiers are verified before a copy can be enabled. Inspect
+the reported destination and chunks, then enable it explicitly. Keep the JSON
+backup unchanged. Shared Milvus/Qdrant multitenancy imports are blocked because
+this restore path requires a separate physical index.
+
+For a native SillyTavern instance with text generation on port 9931 and a separate
+llama.cpp embedding server on port 5001, choose llama.cpp in VectHare, enable
+**Use Alternative Endpoint**, and set `http://127.0.0.1:5001`. Plugin insert/query
+requests now receive that explicit URL instead of falling back to localhost:8080.
+Do not point the text-generation connection at the embedding server. A responding
+`/v1/models` route confirms reachability, not successful embedding generation;
+verify the import and its final count before activation. If the original collection
+has been deleted, restore from JSON rather than using the migration action, which
+needs a live source collection.
+
 ## Explicit BM25 fallback
 
 The dialog can read all stored chunk texts and build a complete BM25 index without

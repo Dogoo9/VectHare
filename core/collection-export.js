@@ -19,7 +19,7 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
-import { getSavedHashes, insertVectorItems, purgeVectorIndex } from './core-vector-api.js';
+import { getSavedHashes, insertVectorItems } from './core-vector-api.js';
 import {
     getCollectionMeta,
     setCollectionMeta,
@@ -34,6 +34,8 @@ import {
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
 import { collectionMutation, physicalCollectionId, resolveCollectionSettings } from './collection-runtime.js';
+import { parseRegistryKey } from './collection-ids.js';
+import { getModelField } from './providers.js';
 import { compareEmbeddingFingerprints, compareEmbeddingProbes, storageSettings } from './collection-portability.js';
 
 // ============================================================================
@@ -433,6 +435,32 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
     });
 }
 
+/** Reserve a fresh destination without probing or purging a live index. */
+async function reserveImportTarget(collectionId, settings, options) {
+    if (options.overwrite) throw new Error('Import cannot overwrite an existing collection. Import to a new ID and review it before enabling.');
+    if (settings.vector_backend === 'milvus' || (settings.vector_backend === 'qdrant' && settings.qdrant_multitenancy)) throw new Error('Safe import requires a separate physical index; shared Milvus/Qdrant multitenancy imports are not supported.');
+    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(collectionId)) throw new Error('Use a new import ID containing letters, numbers, underscores or hyphens.');
+    if (Object.keys(extension_settings.vecthare?.collections || {}).some(k => parseRegistryKey(k).collectionId === collectionId) || getCollectionRegistry().some(k => parseRegistryKey(k).collectionId === collectionId)) {
+        throw new Error('Import target already exists. Choose a new ID; the original was not modified.');
+    }
+    const response = await fetch('/api/plugins/similharity/collections', { headers: getRequestHeaders() });
+    if (!response.ok) throw new Error('Safe import requires Similharity collection discovery to check for collisions.');
+    const data = await response.json();
+    if (!data.success || !Array.isArray(data.collections)) throw new Error('Cannot verify that the import target is unused.');
+    if (data.collections.some(c => {
+        const id = String(c.id || c.collectionId || '');
+        return id === collectionId || parseRegistryKey(id).collectionId === collectionId || id === `${c.backend}:${collectionId}`;
+    })) throw new Error('Import target already exists on disk. Choose a new ID; the original was not modified.');
+    const source = settings.local_embedding_profile?.source || settings.source || 'transformers';
+    const locator = { backend: settings.vector_backend || 'standard', source,
+        model: settings.model ?? settings[getModelField(source)] ?? '', collectionId };
+    const key = `${locator.backend}:${locator.source}:${collectionId}`;
+    const targetSettings = { ...settings, source, collection_locator: locator, storageLocator: null, _collectionResolved: true };
+    setCollectionMeta(key, { enabled: false, autoSync: false, storageLocator: locator, importState: { status: 'building' } });
+    registerCollection(key);
+    return { key, settings: targetSettings };
+}
+
 /**
  * Imports a collection from export data
  * Uses pre-computed vectors if available and settings match, otherwise re-embeds
@@ -441,11 +469,12 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
  * @param {object} settings - VectHare settings
  * @param {object} options - Import options
  * @param {string} options.collectionId - Override collection ID (for rename/duplicate)
- * @param {boolean} options.overwrite - If true, purge existing collection first
+ * @param {boolean} options.overwrite - Rejected: imports must use a new destination
  * @param {boolean} options.forceReembed - If true, re-embed even if vectors exist
  * @returns {Promise<{ success: boolean, collectionId: string, chunkCount: number, usedVectors: boolean, errors: string[] }>}
  */
 export async function importCollection(exportData, settings, options = {}) {
+    const progress = options.silent ? { show() {}, updateCurrentItem() {}, updateChunks() {}, updateProgress() {}, complete() {}, addError() {} } : progressTracker;
     const sourceCollection = exportData.collection || {};
     const collectionId = options.collectionId || sourceCollection.id;
 
@@ -453,7 +482,6 @@ export async function importCollection(exportData, settings, options = {}) {
         throw new Error('No collection ID specified');
     }
 
-    settings = resolveCollectionSettings(collectionId, settings);
     const chunks = exportData.chunks || [];
     if (chunks.some(c => typeof c.text !== "string" || !c.text.trim())) throw new Error("Import requires recoverable text for every chunk.");
     const validChunks = chunks;
@@ -472,28 +500,22 @@ export async function importCollection(exportData, settings, options = {}) {
         compareEmbeddingProbes(embeddingInfo.probes, settings.local_embedding_profile?.probes || settings.embedding_probes, settings.embedding_fingerprint?.dimension).status === 'compatible';
 
     const totalSteps = 4;
-    progressTracker.show('Importing Collection', totalSteps, 'Steps');
-    progressTracker.updateCurrentItem(collectionId);
-    progressTracker.updateChunks(validChunks.length);
+    progress.show('Importing Collection', totalSteps, 'Steps');
+    progress.updateCurrentItem(collectionId);
+    progress.updateChunks(validChunks.length);
 
     const errors = [];
+    let targetKey;
 
     try {
-        // Step 1: Handle existing collection
-        progressTracker.updateProgress(1, 'Preparing collection...');
+        // Step 1: Reserve a new disabled destination
+        progress.updateProgress(1, 'Preparing collection...');
 
-        if (options.overwrite) {
-            try {
-                await purgeVectorIndex(collectionId, settings);
-                console.log(`VectHare Import: Purged existing collection ${collectionId}`);
-            } catch (e) {
-                // Collection might not exist, that's fine - log at debug level
-                console.debug(`VectHare Import: Could not purge ${collectionId} (may not exist):`, e.message);
-            }
-        }
+        const target = await reserveImportTarget(collectionId, settings, options);
+        settings = target.settings; targetKey = target.key;
 
         // Step 2: Prepare chunks
-        progressTracker.updateProgress(2, 'Preparing chunks...');
+        progress.updateProgress(2, 'Preparing chunks...');
 
         const preparedChunks = validChunks.map((chunk, index) => ({
             text: chunk.text,
@@ -503,10 +525,12 @@ export async function importCollection(exportData, settings, options = {}) {
             metadata: chunk.metadata || {},
         }));
 
+        if (new Set(preparedChunks.map(c => String(c.hash))).size !== preparedChunks.length) throw new Error('Import requires unique stable chunk hashes.');
+
         // Step 3: Insert chunks
         if (canUseVectors) {
             // Direct insert with pre-computed vectors (fast!)
-            progressTracker.updateProgress(3, `Inserting ${preparedChunks.length} chunks (using existing vectors)...`);
+            progress.updateProgress(3, `Inserting ${preparedChunks.length} chunks (using existing vectors)...`);
             try {
                 await insertChunksWithVectors(collectionId, preparedChunks, settings);
                 console.log(`VectHare Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
@@ -515,7 +539,7 @@ export async function importCollection(exportData, settings, options = {}) {
             }
         } else {
             // Need to embed (slow)
-            progressTracker.updateProgress(3, `Embedding ${preparedChunks.length} chunks...`);
+            progress.updateProgress(3, `Embedding ${preparedChunks.length} chunks...`);
             try {
                 await insertVectorItems(collectionId, preparedChunks, settings);
                 console.log(`VectHare Import: Embedded and inserted ${preparedChunks.length} chunks`);
@@ -524,8 +548,14 @@ export async function importCollection(exportData, settings, options = {}) {
             }
         }
 
+        const stored = await getSavedHashes(targetKey, settings);
+        const expected = new Set(preparedChunks.map(c => String(c.hash)));
+        if (!Array.isArray(stored) || stored.length !== expected.size || new Set(stored.map(String)).size !== expected.size || stored.some(h => !expected.has(String(h)))) {
+            throw new Error('Imported chunk count/identifiers could not be verified. The target remains disabled.');
+        }
+
         // Step 4: Save metadata
-        progressTracker.updateProgress(4, 'Saving metadata...');
+        progress.updateProgress(4, 'Saving metadata...');
 
         // Collection-level metadata
         const importedMeta = {
@@ -536,6 +566,7 @@ export async function importCollection(exportData, settings, options = {}) {
             tags: sourceCollection.tags || [],
             color: sourceCollection.color,
             contentType: sourceCollection.contentType,
+            collectionType: sourceCollection.contentType || detectContentType(sourceCollection.id || collectionId),
             createdAt: new Date().toISOString(),
             importedFrom: exportData.exportDate,
             importedAt: new Date().toISOString(),
@@ -559,7 +590,7 @@ export async function importCollection(exportData, settings, options = {}) {
             });
         }
 
-        setCollectionMeta(collectionId, importedMeta);
+        setCollectionMeta(targetKey, { ...importedMeta, enabled: false, autoSync: false, importState: { status: 'ready', originalCollectionId: sourceCollection.id }, collectionSize: preparedChunks.length });
 
         // Per-chunk metadata
         for (const chunk of validChunks) {
@@ -570,25 +601,28 @@ export async function importCollection(exportData, settings, options = {}) {
         }
 
         // Register collection
-        registerCollection(collectionId);
+        registerCollection(targetKey);
         saveSettingsDebounced();
 
         const statusMsg = canUseVectors
             ? `Imported ${preparedChunks.length} chunks (used existing vectors)`
             : `Imported ${preparedChunks.length} chunks (re-embedded)`;
-        progressTracker.complete(true, statusMsg);
+        progress.complete(true, `${statusMsg}. Verified new collection ${collectionId}; enable it after review.`);
 
         return {
             success: true,
             collectionId,
             chunkCount: preparedChunks.length,
             usedVectors: canUseVectors,
+            enabled: false,
+            registryKey: targetKey,
             errors,
         };
 
     } catch (error) {
-        progressTracker.addError(error.message);
-        progressTracker.complete(false, 'Import failed');
+        if (targetKey) setCollectionMeta(targetKey, { enabled: false, autoSync: false, importState: { status: 'failed', originalCollectionId: sourceCollection.id } });
+        progress.addError(error.message);
+        progress.complete(false, 'Import failed');
         throw error;
     }
 }
@@ -650,105 +684,7 @@ export async function importMultipleCollections(multiExportData, settings, optio
  * Silent import (no progress tracker) for batch operations
  */
 async function importCollectionSilent(exportData, settings, options = {}) {
-    const sourceCollection = exportData.collection || {};
-    const collectionId = options.collectionId || sourceCollection.id;
-
-    if (!collectionId) {
-        throw new Error('No collection ID specified');
-    }
-
-    settings = resolveCollectionSettings(collectionId, settings);
-    const chunks = exportData.chunks || [];
-    if (chunks.some(c => typeof c.text !== "string" || !c.text.trim())) throw new Error("Import requires recoverable text for every chunk.");
-    const validChunks = chunks;
-
-    if (validChunks.length === 0) {
-        throw new Error('No valid chunks to import');
-    }
-
-    // Check if we can use pre-computed vectors
-    const embeddingInfo = exportData.embedding || {};
-    const chunksWithVectors = validChunks.filter(c => c.vector && Array.isArray(c.vector));
-    const canUseVectors = !options.forceReembed &&
-        chunksWithVectors.length === validChunks.length &&
-        compareEmbeddingFingerprints(embeddingInfo.fingerprint, settings.embedding_fingerprint).status === 'compatible' &&
-        compareEmbeddingProbes(embeddingInfo.probes, settings.local_embedding_profile?.probes || settings.embedding_probes, settings.embedding_fingerprint?.dimension).status === 'compatible';
-
-    // Handle existing collection
-    if (options.overwrite) {
-        try {
-            await purgeVectorIndex(collectionId, settings);
-        } catch (e) {
-            // Collection might not exist - log at debug level
-            console.debug(`VectHare Import: Could not purge ${collectionId} (may not exist):`, e.message);
-        }
-    }
-
-    // Prepare chunks
-    const preparedChunks = validChunks.map((chunk, index) => ({
-        text: chunk.text,
-        index: chunk.index ?? index,
-        hash: chunk.hash ?? getStringHash(chunk.text),
-        vector: canUseVectors ? chunk.vector : undefined,
-        metadata: chunk.metadata || {},
-    }));
-
-    // Insert
-    if (canUseVectors) {
-        await insertChunksWithVectors(collectionId, preparedChunks, settings);
-    } else {
-        await insertVectorItems(collectionId, preparedChunks, settings);
-    }
-
-    // Save metadata
-    const importedMeta = {
-        enabled: true,
-        displayName: sourceCollection.name || collectionId,
-        description: sourceCollection.description || '',
-        scope: sourceCollection.scope || 'global',
-        tags: sourceCollection.tags || [],
-        color: sourceCollection.color,
-        contentType: sourceCollection.contentType,
-        createdAt: new Date().toISOString(),
-        importedFrom: exportData.exportDate,
-        importedAt: new Date().toISOString(),
-    };
-
-    if (exportData.settings) {
-        Object.assign(importedMeta, {
-            ...Object.fromEntries(['enabled', 'lockedToChatIds', 'lockedToChatId', 'lockedToCharacterIds', 'lockMode', 'exclusiveWhenActive', 'exclusiveScope', 'fusionWeight', 'sourcePriority', 'authority'].filter(k => exportData.settings[k] !== undefined).map(k => [k, exportData.settings[k]])),
-            alwaysActive: exportData.settings.alwaysActive,
-            triggers: exportData.settings.triggers,
-            triggerMatchMode: exportData.settings.triggerMatchMode,
-            triggerCaseSensitive: exportData.settings.triggerCaseSensitive,
-            triggerPlainMatchMode: exportData.settings.triggerPlainMatchMode || 'word',
-            triggerScanDepth: exportData.settings.triggerScanDepth,
-            conditions: exportData.settings.conditions,
-            temporalDecay: exportData.settings.temporalDecay,
-            groups: exportData.settings.groups || [],
-            context: exportData.settings.context || '',
-            xmlTag: exportData.settings.xmlTag || '',
-        });
-    }
-
-    setCollectionMeta(collectionId, importedMeta);
-
-    for (const chunk of validChunks) {
-        if (chunk.chunkMeta) {
-            const newHash = chunk.hash ?? getStringHash(chunk.text);
-            saveChunkMetadata(newHash, chunk.chunkMeta);
-        }
-    }
-
-    registerCollection(collectionId);
-    saveSettingsDebounced();
-
-    return {
-        success: true,
-        collectionId,
-        chunkCount: preparedChunks.length,
-        usedVectors: canUseVectors,
-    };
+    return await importCollection(exportData, settings, { ...options, silent: true });
 }
 
 // ============================================================================

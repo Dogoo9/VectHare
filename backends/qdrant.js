@@ -262,6 +262,7 @@ export class QdrantBackend extends VectorBackend {
                 headers: getRequestHeaders(),
                 body: JSON.stringify({
                     backend: BACKEND_TYPE,
+                    ...settings.inference_request_args,
                     collectionId: actualCollectionId,
                     items: batch.map(item => {
                         // Include keywords in the text for embedding/indexing
@@ -381,6 +382,7 @@ export class QdrantBackend extends VectorBackend {
 
         const body = {
             backend: BACKEND_TYPE,
+            ...settings.inference_request_args,
             collectionId: actualCollectionId,
             searchText: searchText,
             topK: topK,
@@ -444,6 +446,7 @@ export class QdrantBackend extends VectorBackend {
 
                 const body = {
                     backend: BACKEND_TYPE,
+                    ...settings.inference_request_args,
                     collectionId: actualCollectionId,
                     searchText: searchText,
                     topK: topK,
@@ -603,6 +606,7 @@ export class QdrantBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: actualCollectionId, // Use separate collection per content type
                 text: newText,
                 source: settings.source || 'transformers',
@@ -705,6 +709,7 @@ export class QdrantBackend extends VectorBackend {
 
         const body = {
             backend: BACKEND_TYPE,
+            ...settings.inference_request_args,
             collectionId: actualCollectionId,
             searchText: searchText,
             topK: topK,

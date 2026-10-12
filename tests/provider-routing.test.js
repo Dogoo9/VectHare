@@ -11,7 +11,7 @@ vi.mock('../backends/backend-manager.js', () => ({ getBackend: async () => mocks
     invalidateBackendHealth: vi.fn(), recordQuery: vi.fn(), recordInsert: vi.fn(), recordDelete: vi.fn(), recordError: vi.fn() }));
 import { extension_settings } from '../../../../extensions.js';
 import { setCollectionMeta } from '../core/collection-metadata.js';
-import { getSavedHashes, insertVectorItems, deleteVectorItems, updateChunkMetadata, updateChunkText, queryCollection, queryMultipleCollections, purgeVectorIndex } from '../core/core-vector-api.js';
+import { getVectorsRequestBody, getSavedHashes, insertVectorItems, deleteVectorItems, updateChunkMetadata, updateChunkText, queryCollection, queryMultipleCollections, purgeVectorIndex } from '../core/core-vector-api.js';
 import { indexLexicalItems, purgeAllLexicalIndexes } from '../core/lexical-index.js';
 import { collectionStorageKey } from '../core/collection-portability.js';
 import { profile, fingerprint, probes } from './embedding-fixtures.js';
@@ -85,4 +85,22 @@ describe('operations after per-collection reassignment', () => {
         expect(mocks.backend.queryCollection.mock.calls[0][3]).toMatchObject({ source: 'koboldcpp', model: 'physical-model' });
         expect(mocks.backend.queryCollection.mock.calls[0][4]).toEqual([0.5, 1]);
     });
+});
+
+it('server-generated inserts and queries carry the selected alternate llama.cpp URL', async () => {
+    const settings = { source: 'llamacpp', vector_backend: 'qdrant', use_alt_endpoint: true, alt_endpoint_url: 'http://127.0.0.1:8099' };
+    await insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], settings);
+    expect(mocks.backend.insertVectorItems.mock.calls[0][2].inference_request_args).toMatchObject({ apiUrl: settings.alt_endpoint_url });
+    await queryCollection('new', 'synthetic', 5, settings);
+    expect(mocks.backend.queryCollection.mock.calls[0][3].inference_request_args).toMatchObject({ apiUrl: settings.alt_endpoint_url });
+});
+it('missing llama.cpp URL fails before any insert or query', async () => {
+    await expect(insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], { source: 'llamacpp' })).rejects.toThrow('Configure');
+    expect(mocks.backend.insertVectorItems).not.toHaveBeenCalled();
+});
+
+it('client profiles use their own endpoint without requiring a global llama.cpp URL', async () => {
+    await queryCollection('new', 'synthetic', 5, { source: 'llamacpp', local_embedding_profile: profile(), vector_backend: 'qdrant' });
+    expect(mocks.embedLocal.mock.calls[0][1].endpoint).toBe('http://localhost:8080');
+    expect(mocks.backend.queryCollection.mock.calls[0][4]).toEqual([0.5, 1]);
 });
