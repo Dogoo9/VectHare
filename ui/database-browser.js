@@ -1,3 +1,4 @@
+import { openEmbeddingMigrationDialog } from './embedding-migration-dialog.js';
 /**
  * ============================================================================
  * VECTHARE DATABASE BROWSER
@@ -898,7 +899,7 @@ function renderCollectionCard(collection) {
                     ${icons.settings(16)} Settings
                 </button>
                 ${
-                  hasMultipleModels
+                  hasMultipleModels && !getCollectionMeta(collection.registryKey).embeddingConnection
                     ? `
                 <button class="vecthare-btn-sm vecthare-action-switch-model"
                         data-collection-key="${uniqueKey}"
@@ -908,6 +909,7 @@ function renderCollectionCard(collection) {
                 `
                     : ""
                 }
+                <button class="vecthare-btn-sm vecthare-action-embedding" data-collection-key="${uniqueKey}">Embedding Provider / Migrate</button>
                 <button class="vecthare-btn-sm vecthare-action-open-folder"
                         data-collection-key="${uniqueKey}"
                         data-backend="${collection.backend}"
@@ -1101,6 +1103,7 @@ function bindCollectionCardEvents() {
           ...browserState.settings,
           vector_backend: collection.backend,
           source: collection.source,
+          collection_locator: getCollectionMeta(collection.registryKey).storageLocator || { backend: collection.backend, source: collection.source, model: collection.model ?? "", collectionId: collection.id },
         };
 
         const result = await deleteCollection(
@@ -1191,6 +1194,7 @@ function bindCollectionCardEvents() {
         const collectionSettings = {
           ...browserState.settings,
           vector_backend: collection.backend,
+          collection_locator: getCollectionMeta(collection.registryKey).storageLocator || { backend: collection.backend, source: collection.source, model: collection.model ?? "", collectionId: collection.id },
         };
 
         // Use unified plugin endpoint
@@ -1392,6 +1396,12 @@ function bindCollectionCardEvents() {
         openRenameDialog(collection.id, collection.name);
       }
     });
+
+  $(".vecthare-action-embedding").off("click").on("click", function (e) {
+    e.stopPropagation();
+    const collection = findCollectionByKey($(this).data("collection-key"));
+    if (collection) openEmbeddingMigrationDialog(collection, browserState.settings, refreshCollections);
+  });
 
   // Switch model (for collections with multiple embedding models)
   $(".vecthare-action-switch-model")
@@ -1618,6 +1628,7 @@ function openModelSwitcher(collection) {
       // Persist
       setCollectionMeta(coll.registryKey || coll.id, {
         preferredModel: modelPath,
+        storageLocator: { backend: coll.backend, source: coll.source, model: modelPath, collectionId: coll.id },
       });
 
       toastr.success(

@@ -33,7 +33,8 @@ import {
 } from './collection-loader.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { getStringHash } from '../../../../utils.js';
-import { compareEmbeddingFingerprints, storageSettings } from './collection-portability.js';
+import { collectionMutation, physicalCollectionId, resolveCollectionSettings } from './collection-runtime.js';
+import { compareEmbeddingFingerprints, compareEmbeddingProbes, storageSettings } from './collection-portability.js';
 
 // ============================================================================
 // CONSTANTS
@@ -59,31 +60,10 @@ const EXPORT_BATCH_SIZE = 100;
  * @returns {Promise<Array>} Chunks with vectors
  */
 async function fetchChunksWithVectors(collectionId, settings) {
-    settings = storageSettings(settings);
-    const backendName = settings.vector_backend || 'standard';
-    const response = await fetch('/api/plugins/similharity/chunks/list', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            backend: backendName === 'standard' ? 'vectra' : backendName,
-            collectionId: collectionId,
-            source: settings.source || 'transformers',
-            model: settings.model || '',
-            limit: 50000, // High limit to get all chunks
-            includeVectors: true, // Include the actual embedding vectors
-        }),
-    });
+    const { readMigrationItems } = await import('./embedding-migration.js');
+    settings = resolveCollectionSettings(collectionId, settings);
+    return await readMigrationItems(physicalCollectionId(collectionId, settings), settings);
 
-    if (!response.ok) {
-        throw new Error(`Failed to fetch chunks: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.items) {
-        throw new Error('Invalid response from chunks API');
-    }
-
-    return data.items;
 }
 
 /**
@@ -98,17 +78,19 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
     progressTracker.updateCurrentItem(collectionId);
 
     // Use collection-specific settings if provided (for multi-backend support)
-    const exportSettings = {
+    const exportKey = collectionInfo.registryKey || (collectionInfo.backend && collectionInfo.source ? `${collectionInfo.backend}:${collectionInfo.source}:${collectionId}` : collectionId);
+    const exportSettings = storageSettings(resolveCollectionSettings(exportKey, {
         ...settings,
         vector_backend: collectionInfo.backend || settings.vector_backend,
         source: collectionInfo.source || settings.source,
-        model: collectionInfo.model || settings.model,
-    };
+        model: collectionInfo.model ?? settings.model,
+        collection_locator: collectionInfo.backend && collectionInfo.source ? { backend: collectionInfo.backend, source: collectionInfo.source, model: collectionInfo.model ?? "", collectionId } : settings.collection_locator,
+    }));
 
     try {
         // Step 1: Get collection metadata
         progressTracker.updateProgress(1, 'Loading metadata...');
-        const collectionMeta = getCollectionMeta(collectionId) || {};
+        const collectionMeta = getCollectionMeta(exportKey) || {};
 
         // Step 2: Get all chunks WITH vectors
         progressTracker.updateProgress(2, 'Loading chunks and vectors...');
@@ -117,11 +99,13 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
         const chunks = rawChunks.map(item => {
             const meta = item.metadata || item;
             const chunk = {
-                hash: meta.hash || item.hash,
+                hash: meta.hash ?? item.hash,
                 text: meta.text || item.text || '',
                 index: meta.index ?? item.index,
                 vector: item.vector || meta.vector || null, // The actual embedding!
                 metadata: {
+                    ...meta,
+                    vector: undefined,
                     contentType: meta.contentType,
                     sourceName: meta.sourceName,
                     entryName: meta.entryName,
@@ -171,17 +155,20 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
             // Embedding info - CRITICAL for import compatibility
             // NOTE: source + model must match for vectors to be compatible
             // backend is just storage location - vectors work across backends
+            storageLocator: exportSettings.collection_locator || null,
             embedding: {
                 source: exportSettings.source || 'transformers',
                 model: exportSettings.model || '',
                 backend: exportSettings.vector_backend || 'standard', // For reference only
                 dimension: vectorDimension,
                 hasVectors: chunksWithVectors > 0,
+                fingerprint: collectionMeta.embedding?.fingerprint || null,
+                probes: collectionMeta.embedding?.probes || null,
             },
 
             // Collection info
             collection: {
-                id: collectionId,
+                id: physicalCollectionId(collectionId, exportSettings),
                 name: collectionMeta.displayName || collectionId,
                 description: collectionMeta.description || '',
                 contentType: collectionMeta.contentType || detectContentType(collectionId),
@@ -194,6 +181,16 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
             // Settings that affect behavior
             settings: {
                 // Activation
+                enabled: collectionMeta.enabled,
+                lockedToChatIds: collectionMeta.lockedToChatIds,
+                lockedToChatId: collectionMeta.lockedToChatId,
+                lockMode: collectionMeta.lockMode,
+                lockedToCharacterIds: collectionMeta.lockedToCharacterIds,
+                exclusiveWhenActive: collectionMeta.exclusiveWhenActive,
+                exclusiveScope: collectionMeta.exclusiveScope,
+                fusionWeight: collectionMeta.fusionWeight,
+                sourcePriority: collectionMeta.sourcePriority,
+                authority: collectionMeta.authority,
                 alwaysActive: collectionMeta.alwaysActive || false,
                 triggers: collectionMeta.triggers || [],
                 triggerMatchMode: collectionMeta.triggerMatchMode || 'any',
@@ -260,84 +257,7 @@ export async function exportMultipleCollections(collectionIds, settings) {
         progressTracker.updateCurrentItem(collectionId);
 
         try {
-            // Export without showing nested progress
-            const collectionMeta = getCollectionMeta(collectionId) || {};
-            const chunksResult = await getSavedHashes(collectionId, settings, true);
-
-            let chunks = [];
-            if (chunksResult && chunksResult.metadata) {
-                chunks = chunksResult.metadata.map(meta => ({
-                    hash: meta.hash,
-                    text: meta.text || '',
-                    index: meta.index,
-                    metadata: {
-                        contentType: meta.contentType,
-                        sourceName: meta.sourceName,
-                        entryName: meta.entryName,
-                        entryUid: meta.entryUid,
-                        keywords: meta.keywords || [],
-                        customWeights: meta.customWeights,
-                        disabledKeywords: meta.disabledKeywords,
-                        keywordLevel: meta.keywordLevel,
-                        keywordBaseWeight: meta.keywordBaseWeight,
-                        importance: meta.importance,
-                        conditions: meta.conditions,
-                        chunkGroup: meta.chunkGroup,
-                        summary: meta.summary,
-                        isSummaryChunk: meta.isSummaryChunk,
-                        parentHash: meta.parentHash,
-                        speaker: meta.speaker,
-                        isUser: meta.isUser,
-                        messageId: meta.messageId,
-                    },
-                }));
-
-                for (const chunk of chunks) {
-                    const chunkMeta = getChunkMetadata(chunk.hash);
-                    if (chunkMeta) {
-                        chunk.chunkMeta = chunkMeta;
-                    }
-                }
-            }
-
-            exports.push({
-                collection: {
-                    id: collectionId,
-                    name: collectionMeta.displayName || collectionId,
-                    description: collectionMeta.description || '',
-                    contentType: collectionMeta.contentType || detectContentType(collectionId),
-                    scope: collectionMeta.scope || 'global',
-                    tags: collectionMeta.tags || [],
-                    color: collectionMeta.color,
-                    createdAt: collectionMeta.createdAt,
-                },
-                settings: {
-                    alwaysActive: collectionMeta.alwaysActive || false,
-                    triggers: collectionMeta.triggers || [],
-                    triggerMatchMode: collectionMeta.triggerMatchMode || 'any',
-                    triggerCaseSensitive: collectionMeta.triggerCaseSensitive || false,
-                    triggerPlainMatchMode: collectionMeta.triggerPlainMatchMode || 'word',
-                    triggerScanDepth: collectionMeta.triggerScanDepth || 5,
-                    conditions: collectionMeta.conditions || { enabled: false, logic: 'AND', rules: [] },
-                    temporalDecay: collectionMeta.temporalDecay || {
-                        enabled: false,
-                        mode: 'exponential',
-                        halfLife: 50,
-                        linearRate: 0.01,
-                        minRelevance: 0.3,
-                        sceneAware: false,
-                    },
-                    groups: collectionMeta.groups || [],
-                    context: collectionMeta.context || '',
-                    xmlTag: collectionMeta.xmlTag || '',
-                },
-                chunks: chunks,
-                stats: {
-                    chunkCount: chunks.length,
-                    hasText: chunks.filter(c => c.text).length,
-                    hasKeywords: chunks.filter(c => c.metadata?.keywords?.length > 0).length,
-                },
-            });
+            exports.push(await exportCollection(collectionId, settings));
         } catch (error) {
             console.error(`VectHare Export: Failed to export ${collectionId}:`, error);
             errors.push({ collectionId, error: error.message });
@@ -430,7 +350,7 @@ export function validateImportData(data, currentSettings = {}) {
         } else {
             const chunksWithoutText = col.chunks.filter(c => !c.text);
             if (chunksWithoutText.length > 0) {
-                warnings.push(`${col.collection?.id}: ${chunksWithoutText.length} chunks have no text (will be skipped)`);
+                errors.push(`${col.collection?.id}: ${chunksWithoutText.length} chunks have no recoverable text.`);
             }
         }
 
@@ -441,7 +361,10 @@ export function validateImportData(data, currentSettings = {}) {
 
             if (hasVectors && currentSettings.source) {
                 // Check if current settings match export
-                const comparison = compareEmbeddingFingerprints(col.embedding.fingerprint, currentSettings.embedding_fingerprint);
+                const fingerprintComparison = compareEmbeddingFingerprints(col.embedding.fingerprint, currentSettings.embedding_fingerprint);
+                const comparison = fingerprintComparison.status === 'compatible'
+                    ? compareEmbeddingProbes(col.embedding.probes, currentSettings.local_embedding_profile?.probes || currentSettings.embedding_probes, currentSettings.embedding_fingerprint?.dimension)
+                    : fingerprintComparison;
                 if (comparison.status !== 'compatible') {
                     compatible = false;
                     compatibilityStatus = comparison.status;
@@ -477,6 +400,11 @@ export function validateImportData(data, currentSettings = {}) {
  * @param {object} settings - VectHare settings
  */
 async function insertChunksWithVectors(collectionId, chunks, settings) {
+    const logicalId = collectionId;
+    settings = resolveCollectionSettings(logicalId, settings);
+    collectionId = physicalCollectionId(logicalId, settings);
+    return collectionMutation(collectionId, settings, async () => {
+    settings = storageSettings(settings);
     const backendName = settings.vector_backend || 'standard';
     const response = await fetch('/api/plugins/similharity/chunks/insert', {
         method: 'POST',
@@ -502,6 +430,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
     }
 
     return await response.json();
+    });
 }
 
 /**
@@ -524,8 +453,10 @@ export async function importCollection(exportData, settings, options = {}) {
         throw new Error('No collection ID specified');
     }
 
+    settings = resolveCollectionSettings(collectionId, settings);
     const chunks = exportData.chunks || [];
-    const validChunks = chunks.filter(c => c.text && c.text.trim());
+    if (chunks.some(c => typeof c.text !== "string" || !c.text.trim())) throw new Error("Import requires recoverable text for every chunk.");
+    const validChunks = chunks;
 
     if (validChunks.length === 0) {
         throw new Error('No valid chunks to import (all chunks missing text)');
@@ -537,7 +468,8 @@ export async function importCollection(exportData, settings, options = {}) {
     const vectorCompatibility = compareEmbeddingFingerprints(embeddingInfo.fingerprint, settings.embedding_fingerprint);
     const canUseVectors = !options.forceReembed &&
         chunksWithVectors.length === validChunks.length &&
-        vectorCompatibility.status === 'compatible';
+        vectorCompatibility.status === 'compatible' &&
+        compareEmbeddingProbes(embeddingInfo.probes, settings.local_embedding_profile?.probes || settings.embedding_probes, settings.embedding_fingerprint?.dimension).status === 'compatible';
 
     const totalSteps = 4;
     progressTracker.show('Importing Collection', totalSteps, 'Steps');
@@ -566,7 +498,7 @@ export async function importCollection(exportData, settings, options = {}) {
         const preparedChunks = validChunks.map((chunk, index) => ({
             text: chunk.text,
             index: chunk.index ?? index,
-            hash: getStringHash(chunk.text),
+            hash: chunk.hash ?? getStringHash(chunk.text),
             vector: canUseVectors ? chunk.vector : undefined,
             metadata: chunk.metadata || {},
         }));
@@ -612,6 +544,7 @@ export async function importCollection(exportData, settings, options = {}) {
         // Merge with exported settings
         if (exportData.settings) {
             Object.assign(importedMeta, {
+                ...Object.fromEntries(['enabled', 'lockedToChatIds', 'lockedToChatId', 'lockedToCharacterIds', 'lockMode', 'exclusiveWhenActive', 'exclusiveScope', 'fusionWeight', 'sourcePriority', 'authority'].filter(k => exportData.settings[k] !== undefined).map(k => [k, exportData.settings[k]])),
                 alwaysActive: exportData.settings.alwaysActive,
                 triggers: exportData.settings.triggers,
                 triggerMatchMode: exportData.settings.triggerMatchMode,
@@ -631,7 +564,7 @@ export async function importCollection(exportData, settings, options = {}) {
         // Per-chunk metadata
         for (const chunk of validChunks) {
             if (chunk.chunkMeta) {
-                const newHash = getStringHash(chunk.text);
+                const newHash = chunk.hash ?? getStringHash(chunk.text);
                 saveChunkMetadata(newHash, chunk.chunkMeta);
             }
         }
@@ -724,8 +657,10 @@ async function importCollectionSilent(exportData, settings, options = {}) {
         throw new Error('No collection ID specified');
     }
 
+    settings = resolveCollectionSettings(collectionId, settings);
     const chunks = exportData.chunks || [];
-    const validChunks = chunks.filter(c => c.text && c.text.trim());
+    if (chunks.some(c => typeof c.text !== "string" || !c.text.trim())) throw new Error("Import requires recoverable text for every chunk.");
+    const validChunks = chunks;
 
     if (validChunks.length === 0) {
         throw new Error('No valid chunks to import');
@@ -736,8 +671,8 @@ async function importCollectionSilent(exportData, settings, options = {}) {
     const chunksWithVectors = validChunks.filter(c => c.vector && Array.isArray(c.vector));
     const canUseVectors = !options.forceReembed &&
         chunksWithVectors.length === validChunks.length &&
-        embeddingInfo.source === settings.source &&
-        (!embeddingInfo.model || !settings.model || embeddingInfo.model === settings.model);
+        compareEmbeddingFingerprints(embeddingInfo.fingerprint, settings.embedding_fingerprint).status === 'compatible' &&
+        compareEmbeddingProbes(embeddingInfo.probes, settings.local_embedding_profile?.probes || settings.embedding_probes, settings.embedding_fingerprint?.dimension).status === 'compatible';
 
     // Handle existing collection
     if (options.overwrite) {
@@ -753,7 +688,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
     const preparedChunks = validChunks.map((chunk, index) => ({
         text: chunk.text,
         index: chunk.index ?? index,
-        hash: getStringHash(chunk.text),
+        hash: chunk.hash ?? getStringHash(chunk.text),
         vector: canUseVectors ? chunk.vector : undefined,
         metadata: chunk.metadata || {},
     }));
@@ -781,6 +716,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
 
     if (exportData.settings) {
         Object.assign(importedMeta, {
+            ...Object.fromEntries(['enabled', 'lockedToChatIds', 'lockedToChatId', 'lockedToCharacterIds', 'lockMode', 'exclusiveWhenActive', 'exclusiveScope', 'fusionWeight', 'sourcePriority', 'authority'].filter(k => exportData.settings[k] !== undefined).map(k => [k, exportData.settings[k]])),
             alwaysActive: exportData.settings.alwaysActive,
             triggers: exportData.settings.triggers,
             triggerMatchMode: exportData.settings.triggerMatchMode,
@@ -799,7 +735,7 @@ async function importCollectionSilent(exportData, settings, options = {}) {
 
     for (const chunk of validChunks) {
         if (chunk.chunkMeta) {
-            const newHash = getStringHash(chunk.text);
+            const newHash = chunk.hash ?? getStringHash(chunk.text);
             saveChunkMetadata(newHash, chunk.chunkMeta);
         }
     }

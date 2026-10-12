@@ -41,6 +41,8 @@ const MULTITENANCY_COLLECTION = 'vecthare_multitenancy';
  * Get the model value from settings based on provider
  */
 function getModelFromSettings(settings) {
+    const locator = settings.collection_locator || settings.storageLocator;
+    if (locator) return locator.model ?? "";
     const modelField = getModelField(settings.source);
     return modelField ? settings[modelField] || '' : '';
 }
@@ -264,7 +266,7 @@ export class QdrantBackend extends VectorBackend {
                     items: batch.map(item => {
                         // Include keywords in the text for embedding/indexing
                         let textWithKeywords = item.text || '';
-                        if (item.keywords && item.keywords.length > 0) {
+                        if (!item.vector && item.keywords && item.keywords.length > 0) {
                             const keywordTexts = item.keywords.map(kw => kw.text || kw).join(' ');
                             textWithKeywords += ` [KEYWORDS: ${keywordTexts}]`;
                         }
@@ -272,15 +274,15 @@ export class QdrantBackend extends VectorBackend {
                         const metadata = {
                             ...item.metadata,
                             // Pass through VectHare-specific fields
-                            importance: item.importance,
-                            keywords: item.keywords,
-                            customWeights: item.customWeights,
-                            disabledKeywords: item.disabledKeywords,
-                            chunkGroup: item.chunkGroup,
-                            conditions: item.conditions,
-                            summary: item.summary,
-                            isSummaryChunk: item.isSummaryChunk,
-                            parentHash: item.parentHash,
+                            importance: item.importance ?? item.metadata?.importance,
+                            keywords: item.keywords ?? item.metadata?.keywords,
+                            customWeights: item.customWeights ?? item.metadata?.customWeights,
+                            disabledKeywords: item.disabledKeywords ?? item.metadata?.disabledKeywords,
+                            chunkGroup: item.chunkGroup ?? item.metadata?.chunkGroup,
+                            conditions: item.conditions ?? item.metadata?.conditions,
+                            summary: item.summary ?? item.metadata?.summary,
+                            isSummaryChunk: item.isSummaryChunk ?? item.metadata?.isSummaryChunk,
+                            parentHash: item.parentHash ?? item.metadata?.parentHash,
                         };
 
                         // Add content_type for multitenancy mode

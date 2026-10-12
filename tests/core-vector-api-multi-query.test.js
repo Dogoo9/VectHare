@@ -16,7 +16,7 @@ vi.mock('../core/../../../../openai.js', () => ({ oai_settings: {} }));
 vi.mock('../../../shared.js', () => ({ isWebLlmSupported: () => true }));
 vi.mock('../providers/webllm.js', () => ({ getWebLlmProvider: () => ({ embedTexts: mocks.embedTexts }) }));
 vi.mock('../backends/backend-manager.js', () => ({
-    getBackend: async () => ({ queryMultipleCollections: mocks.backendQuery }),
+    getBackend: async () => ({ queryMultipleCollections: mocks.backendQuery, getSavedHashes: async () => [1, 2] }),
     invalidateBackendHealth: vi.fn(), recordQuery: vi.fn(), recordInsert: vi.fn(),
     recordDelete: vi.fn(), recordError: vi.fn(),
 }));

@@ -23,6 +23,7 @@ import {
     deleteCollectionMeta,
     ensureCollectionMeta,
     getCollectionMeta,
+    setCollectionMeta,
 } from './collection-metadata.js';
 import { purgeVectorIndex } from './core-vector-api.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
@@ -127,7 +128,8 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
 
     // Step 1: Delete vectors from backend (most important - actual data)
     try {
-        await purgeVectorIndex(collectionId, settings);
+        const purged = await purgeVectorIndex(registryKey || collectionId, settings);
+        if (!purged) throw new Error("Physical collection purge failed; metadata retained.");
         vectorsDeleted = true;
         console.log(`VectHare: ✓ Deleted vectors for ${collectionId}`);
     } catch (error) {
@@ -135,6 +137,8 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
         console.warn(`VectHare: ✗ Failed to delete vectors for ${collectionId}:`, error.message);
         // Continue anyway - registry/metadata cleanup is still valuable
     }
+
+    if (!vectorsDeleted) return { success: false, errors, vectorsDeleted: false, registryDeleted: false, metadataDeleted: false };
 
     // Step 2: Unregister from registry (try both formats)
     try {
@@ -155,7 +159,7 @@ export async function deleteCollection(collectionId, settings, registryKey = nul
 
     // Step 3: Delete metadata
     try {
-        deleteCollectionMeta(collectionId);
+        deleteCollectionMeta(registryKey || collectionId);
         metadataDeleted = true;
         console.log(`VectHare: ✓ Deleted metadata for ${collectionId}`);
     } catch (error) {
@@ -537,7 +541,7 @@ async function discoverViaFallback(settings) {
         const parsed = parseRegistryKey(registryKey);
         const collectionId = parsed.collectionId;
 
-        const result = await probeCollection(collectionId, settings);
+        const result = await probeCollection(registryKey, settings);
         if (result.exists) {
             validRegistryEntries.push(registryKey);
             if (!discovered.includes(registryKey)) {
@@ -799,7 +803,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
 
                 // Check if user has a preferred model saved
                 const collectionMeta = getCollectionMeta(registryKey);
-                const preferredModel = collectionMeta?.preferredModel;
+                const preferredModel = collectionMeta?.storageLocator?.model ?? collectionMeta?.preferredModel;
 
                 if (preferredModel !== undefined && models.some(m => m.path === preferredModel)) {
                     // User has a valid preferred model
@@ -820,7 +824,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                 console.log(`VectHare:   Using fallback mode - trying standard backend first`);
                 const standardSettings = { ...settings, vector_backend: 'standard' };
                 try {
-                    hashes = await getSavedHashes(collectionId, standardSettings);
+                    hashes = await getSavedHashes(registryKey, { ...standardSettings, source: registrySource || settings.source });
                     chunkCount = hashes?.length || 0;
                     console.log(`VectHare:   Found ${chunkCount} hashes via standard backend`);
                 } catch (standardError) {
@@ -828,7 +832,7 @@ export async function loadAllCollections(settings, autoDiscover = true) {
                     if (settings.vector_backend && settings.vector_backend !== 'standard') {
                         console.log(`VectHare:   Standard backend failed, trying ${settings.vector_backend}`);
                         try {
-                            hashes = await getSavedHashes(collectionId, settings);
+                            hashes = await getSavedHashes(registryKey, settings);
                             chunkCount = hashes?.length || 0;
                             console.log(`VectHare:   Found ${chunkCount} hashes via ${settings.vector_backend}`);
                         } catch (altError) {
@@ -856,6 +860,9 @@ export async function loadAllCollections(settings, autoDiscover = true) {
             // Use registryKey (source:id) for internal tracking to keep collections unique
             const enabled = isCollectionEnabled(registryKey);
             ensureCollectionMeta(registryKey, { scope: metadata.scope });
+            if (!getCollectionMeta(registryKey).storageLocator) {
+                setCollectionMeta(registryKey, { storageLocator: { backend, source, model, collectionId } });
+            }
 
             collections.push({
                 id: collectionId,           // Original collection ID (for API calls)

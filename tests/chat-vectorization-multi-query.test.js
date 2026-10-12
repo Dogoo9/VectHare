@@ -191,7 +191,8 @@ describe('rearrangeChat retrieval timings', () => {
         try {
             await rearrangeChat([{ mes: 'Search for the edited entry' }], { query: 1, top_k: 5 }, 'normal');
             const ids = queryMultipleCollections.mock.calls[0][0];
-            expect(ids.filter(id => id === 'notes')).toHaveLength(1);
+            expect(ids.filter(id => id === 'qdrant:openai:notes')).toHaveLength(1);
+            expect(ids).not.toContain('notes');
         } finally {
             settings.vecthare_collection_registry = [];
             delete settings.collections.notes;
