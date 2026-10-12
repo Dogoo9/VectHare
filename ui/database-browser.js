@@ -576,10 +576,12 @@ function bindBrowserEvents() {
       const info = getExportInfo(data);
       const validation = validateImportData(data, browserState.settings);
 
-      // Show import confirmation dialog
+      const targetId = `vecthare_import_${crypto.randomUUID().replaceAll("-", "")}`;
+      // Imports create a separate disabled copy; an existing index is never purged.
       let message = `Import "${info.collections[0]?.name || "collection"}"?\n\n`;
       message += `• ${info.totalChunks} chunks\n`;
       message += `• ${info.totalChunksWithVectors} with vectors\n`;
+      message += `\nNew destination: ${targetId}. The original is retained. The copy stays disabled until you review and enable it.\n`;
 
       if (info.embedding) {
         message += `\nEmbedding: ${info.embedding.source}/${info.embedding.model || "default"}\n`;
@@ -594,11 +596,9 @@ function bindBrowserEvents() {
       }
 
       if (!validation.compatible && info.totalChunksWithVectors > 0) {
-        message += `\n⚠️ Your embedding settings don't match.\n`;
-        message += `To use existing vectors, change your settings to:\n`;
-        message += `  Source: ${info.embedding?.source || "unknown"}\n`;
-        message += `  Model: ${info.embedding?.model || "default"}\n`;
-        message += `\nOr continue to re-embed with current settings.`;
+        message += `\nSaved vector compatibility is ${validation.compatibilityStatus}. Matching provider/model names alone are insufficient.\n`;
+        message += `This copy will be re-embedded with the selected provider (${browserState.settings.source}).`;
+
       }
 
       if (!validation.valid) {
@@ -614,7 +614,8 @@ function bindBrowserEvents() {
 
       // Perform import
       const result = await importCollection(data, browserState.settings, {
-        overwrite: true, // Overwrite if exists
+        collectionId: targetId,
+        overwrite: false,
       });
 
       if (result.success) {
@@ -622,7 +623,7 @@ function bindBrowserEvents() {
           ? "(used existing vectors)"
           : "(re-embedded)";
         toastr.success(
-          `Imported ${result.chunkCount} chunks ${vectorMsg}`,
+          `Verified ${result.chunkCount} chunks ${vectorMsg} in ${result.collectionId}. The copy is disabled; review and enable it in the browser.`,
           "VectHare Import",
         );
 

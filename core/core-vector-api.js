@@ -232,7 +232,8 @@ export function getVectorsRequestBody(args = {}, settings) {
             body.keep = !!settings.ollama_keep;
             break;
         case 'llamacpp':
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
+            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls?.[textgen_types.LLAMACPP];
+            if (!body.apiUrl) throw new Error('Configure the llama.cpp embedding server URL in SillyTavern or VectHare alternate endpoint settings.');
             break;
         case 'vllm':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
@@ -576,7 +577,7 @@ async function getSavedHashesResolved(collectionId, settings, includeMetadata = 
  */
 async function insertVectorItemsResolved(collectionId, items, settings, onProgress = null) {
     assertWritableEmbedding(settings);
-    const routed = storageSettings(settings);
+    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation
@@ -769,7 +770,7 @@ async function deleteVectorItemsResolved(collectionId, hashes, settings) {
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes and metadata of the results
  */
 async function queryCollectionResolved(collectionId, searchText, topK, settings) {
-    const routed = storageSettings(settings);
+    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
     const lexicalKey = collectionStorageKey(collectionId, settings);
     if (settings.retrieval_mode === 'lexical_only') {
         await requireCompleteLexical(collectionId, settings);
@@ -929,7 +930,7 @@ async function queryMultipleCollectionsResolved(collectionIds, searchText, topK,
         }));
     }
     const totalStart = performance.now();
-    const routed = storageSettings(settings);
+    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation

@@ -124,6 +124,7 @@ export class LanceDBBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: actualCollectionId,
                 items: items.map(item => ({
                     hash: item.hash,
@@ -185,6 +186,7 @@ export class LanceDBBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: actualCollectionId,
                 searchText: searchText,
                 topK: topK,
@@ -227,6 +229,7 @@ export class LanceDBBackend extends VectorBackend {
                     headers: getRequestHeaders(),
                     body: JSON.stringify({
                         backend: BACKEND_TYPE,
+                        ...settings.inference_request_args,
                         collectionId: actualCollectionId,
                         searchText: searchText,
                         topK: topK,
@@ -377,6 +380,7 @@ export class LanceDBBackend extends VectorBackend {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: BACKEND_TYPE,
+                ...settings.inference_request_args,
                 collectionId: actualCollectionId,
                 text: newText,
                 source: settings.source || 'transformers',

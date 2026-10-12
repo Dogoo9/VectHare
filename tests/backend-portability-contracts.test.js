@@ -29,3 +29,8 @@ it('precomputed Qdrant documents preserve original text instead of adding keywor
     const item = JSON.parse(fetchMock.mock.calls[0][1].body).items[0];
     expect(item.text).toBe('key'); expect(item.metadata.timestamp).toBe(55);
 });
+
+it('Qdrant insertion forwards the selected llama.cpp URL instead of falling back to plugin localhost:8080', async () => {
+    await new QdrantBackend().insertVectorItems('new', [{ hash: 7, text: 'synthetic' }], { source: 'llamacpp', inference_request_args: { apiUrl: 'http://127.0.0.1:8099' } });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ source: 'llamacpp', apiUrl: 'http://127.0.0.1:8099' });
+});
