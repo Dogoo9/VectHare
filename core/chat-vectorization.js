@@ -645,8 +645,8 @@ function gatherCollectionsToQuery(settings) {
         // Check if collection is enabled. getCollectionMeta/isCollectionEnabled resolve
         // metadata across bare-id/registry-key/legacy forms internally, so the bare
         // collectionId works for both the enabled check and the actual query.
-        if (isCollectionEnabled(collectionId)) {
-            collectionsToQuery.push(collectionId);
+        if (isCollectionEnabled(registryKey)) {
+            collectionsToQuery.push(registryKey);
         }
     }
 
@@ -666,7 +666,15 @@ function gatherCollectionsToQuery(settings) {
 
     // Discovered registry keys and legacy/edit-created aliases may resolve to
     // the same API ID. Query that collection once even before registry cleanup.
-    return applyChatCollectionPolicy([...new Set(collectionsToQuery)], currentChatId);
+    const ids = [...new Set(collectionsToQuery)];
+    const deduplicated = ids.filter(id => {
+        const parsed = parseRegistryKey(id);
+        return parsed.backend || !ids.some(other => {
+            const candidate = parseRegistryKey(other);
+            return candidate.backend && candidate.collectionId === parsed.collectionId;
+        });
+    });
+    return applyChatCollectionPolicy(deduplicated, currentChatId);
 }
 
 /**

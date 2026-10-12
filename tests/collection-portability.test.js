@@ -9,7 +9,7 @@ const fingerprint = overrides => createEmbeddingFingerprint({
     pooling: 'mean', normalization: 'l2', documentPrefix: 'search_document: ',
     queryPrefix: 'search_query: ', documentTask: 'retrieval.document',
     queryTask: 'retrieval.query', tokenizer: 'nomic-v1.5', truncation: 'end',
-    maxTokens: 8192, distanceMetric: 'cosine', ...overrides,
+    maxTokens: 8192, distanceMetric: 'cosine', textCleaning: 'strip-markdown-html', ...overrides,
 });
 
 describe('portable collection identity', () => {

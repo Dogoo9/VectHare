@@ -25,6 +25,8 @@ const BACKEND_TYPE = 'lancedb';
  * Get the model value from settings based on provider
  */
 function getModelFromSettings(settings) {
+    const locator = settings.collection_locator || settings.storageLocator;
+    if (locator) return locator.model ?? "";
     const modelField = getModelField(settings.source);
     return modelField ? settings[modelField] || '' : '';
 }
@@ -131,15 +133,15 @@ export class LanceDBBackend extends VectorBackend {
                     metadata: {
                         ...item.metadata,
                         // Pass through VectHare-specific fields
-                        importance: item.importance,
-                        keywords: item.keywords,
-                        customWeights: item.customWeights,
-                        disabledKeywords: item.disabledKeywords,
-                        chunkGroup: item.chunkGroup,
-                        conditions: item.conditions,
-                        summary: item.summary,
-                        isSummaryChunk: item.isSummaryChunk,
-                        parentHash: item.parentHash,
+                        importance: item.importance ?? item.metadata?.importance,
+                        keywords: item.keywords ?? item.metadata?.keywords,
+                        customWeights: item.customWeights ?? item.metadata?.customWeights,
+                        disabledKeywords: item.disabledKeywords ?? item.metadata?.disabledKeywords,
+                        chunkGroup: item.chunkGroup ?? item.metadata?.chunkGroup,
+                        conditions: item.conditions ?? item.metadata?.conditions,
+                        summary: item.summary ?? item.metadata?.summary,
+                        isSummaryChunk: item.isSummaryChunk ?? item.metadata?.isSummaryChunk,
+                        parentHash: item.parentHash ?? item.metadata?.parentHash,
                     } || {},
                 })),
                 source: settings.source || 'transformers',
@@ -175,7 +177,7 @@ export class LanceDBBackend extends VectorBackend {
         }
     }
 
-    async queryCollection(collectionId, searchText, topK, settings) {
+    async queryCollection(collectionId, searchText, topK, settings, queryVector = null) {
         const actualCollectionId = this._stripRegistryPrefix(collectionId);
         console.log(`[LanceDB] queryCollection: original=${collectionId}, stripped=${actualCollectionId}`);
         const response = await fetch('/api/plugins/similharity/chunks/query', {
@@ -189,6 +191,7 @@ export class LanceDBBackend extends VectorBackend {
                 threshold: 0.0,
                 source: settings.source || 'transformers',
                 model: getModelFromSettings(settings),
+                ...(queryVector ? { queryVector } : {}),
             }),
         });
 

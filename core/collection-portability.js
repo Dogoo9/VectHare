@@ -4,14 +4,14 @@ export const PROBE_TOLERANCE = 1e-5;
 const FINGERPRINT_FIELDS = [
     'artifact', 'revision', 'dimension', 'pooling', 'normalization',
     'documentPrefix', 'queryPrefix', 'documentTask', 'queryTask',
-    'tokenizer', 'truncation', 'maxTokens', 'distanceMetric',
+    'tokenizer', 'truncation', 'maxTokens', 'distanceMetric', 'textCleaning',
 ];
 
 /** A credential-free description of an embedding space, not of its server. */
 export function createEmbeddingFingerprint(value = {}) {
-    const fingerprint = { version: EMBEDDING_FINGERPRINT_VERSION };
+    const fingerprint = { version: value.version ?? EMBEDDING_FINGERPRINT_VERSION };
     for (const field of FINGERPRINT_FIELDS) {
-        if (value[field] !== undefined && value[field] !== null && value[field] !== '') {
+        if (value[field] !== undefined && value[field] !== null && (value[field] !== '' || ['documentPrefix', 'queryPrefix'].includes(field))) {
             fingerprint[field] = value[field];
         }
     }
@@ -25,6 +25,9 @@ export function fingerprintKey(value) {
 
 /** Missing provenance is unknown; matching names or dimensions never certify compatibility. */
 export function compareEmbeddingFingerprints(stored, candidate) {
+    if (stored?.version !== EMBEDDING_FINGERPRINT_VERSION || candidate?.version !== EMBEDDING_FINGERPRINT_VERSION) {
+        return { status: 'unknown', reason: 'Missing or unsupported embedding fingerprint version.' };
+    }
     const left = createEmbeddingFingerprint(stored);
     const right = createEmbeddingFingerprint(candidate);
     const identity = ['artifact', 'revision'];
@@ -87,7 +90,7 @@ export function collectionStorageKey(collectionId, settings = {}) {
         : { collectionId };
     return [locator.backend || parsed.backend || settings.vector_backend || 'standard',
         locator.source || parsed.source || settings.source || 'transformers',
-        locator.model || '', parsed.collectionId || collectionId].map(encodeURIComponent).join(':');
+        locator.model ?? settings.model ?? '', locator.collectionId || parsed.collectionId || collectionId].map(encodeURIComponent).join(':');
 }
 
 export function assertWritableEmbedding(settings = {}) {
@@ -102,6 +105,8 @@ export async function rebuildCollection({ source, target, items, writeBatch, ver
     if (!Array.isArray(items) || items.some(item => typeof item?.text !== 'string' || !item.text.trim())) {
         throw new Error('Rebuild requires recoverable text for every chunk.');
     }
+    if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error('Invalid rebuild batch size.');
+    if (new Set(items.map(i => String(i.hash))).size !== items.length || items.some(i => i.hash === undefined)) throw new Error('Rebuild requires unique stable chunk hashes.');
     let written = 0;
     try {
         for (let offset = 0; offset < items.length; offset += batchSize) {

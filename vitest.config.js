@@ -12,13 +12,13 @@ const world_infoStub = fileURLToPath(new URL('./tests/stubs/world-info.js', impo
 export default defineConfig({
     resolve: {
         alias: [
-            { find: /\/extensions\.js$/, replacement: extensionsStub },
-            { find: /\/script\.js$/, replacement: scriptStub },
-            { find: /\/textgen-settings\.js$/, replacement: textgen_settingsStub },
-            { find: /\/openai\.js$/, replacement: openaiStub },
-            { find: /\/secrets\.js$/, replacement: secretsStub },
-            { find: /\/utils\.js$/, replacement: utilsStub },
-            { find: /\/world-info\.js$/, replacement: world_infoStub },
+            { find: /^.*\/extensions\.js$/, replacement: extensionsStub },
+            { find: /^.*\/script\.js$/, replacement: scriptStub },
+            { find: /^.*\/textgen-settings\.js$/, replacement: textgen_settingsStub },
+            { find: /^.*\/openai\.js$/, replacement: openaiStub },
+            { find: /^.*\/secrets\.js$/, replacement: secretsStub },
+            { find: /^.*\/utils\.js$/, replacement: utilsStub },
+            { find: /^.*\/world-info\.js$/, replacement: world_infoStub },
         ],
     },
     test: {

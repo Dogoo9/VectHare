@@ -240,12 +240,9 @@ describe('StandardBackend', () => {
             expect(result).toEqual([12345, 67890]);
         });
 
-        it('should return empty array on 500 status', async () => {
+        it('should surface 500 list failures rather than hiding unreadable collections', async () => {
             fetchMock.mockResolvedValueOnce(mockFetchError(500, 'Collection not found'));
-
-            const result = await backend.getSavedHashes('test-collection', defaultSettings);
-
-            expect(result).toEqual([]);
+            await expect(backend.getSavedHashes('test-collection', defaultSettings)).rejects.toThrow('Failed to get saved hashes');
         });
 
         it('should throw on other errors', async () => {
@@ -304,7 +301,7 @@ describe('StandardBackend', () => {
         it('should insert items via native API when plugin unavailable', async () => {
             fetchMock.mockResolvedValueOnce(mockFetchResponse({}));
 
-            await backend.insertVectorItems('test-collection', sampleItems, defaultSettings);
+            await backend.insertVectorItems('test-collection', sampleItems, { ...defaultSettings, source: "koboldcpp" });
 
             expect(fetchMock).toHaveBeenCalledWith(
                 '/api/vector/insert',
@@ -358,7 +355,7 @@ describe('StandardBackend', () => {
             fetchMock.mockResolvedValueOnce(mockFetchResponse({ hashes: [], metadata: [] }));
 
             const queryVector = [0.1, 0.2, 0.3];
-            await backend.queryCollection('test-collection', 'search query', 5, defaultSettings, queryVector);
+            await backend.queryCollection('test-collection', 'search query', 5, { ...defaultSettings, source: "koboldcpp" }, queryVector);
 
             const callBody = JSON.parse(fetchMock.mock.calls[0][1].body);
             expect(callBody.embeddings).toBeDefined();
@@ -434,24 +431,17 @@ describe('StandardBackend', () => {
     });
 
     describe('purgeVectorIndex', () => {
-        it('should purge collection successfully', async () => {
+        it('deletes hashes only in the addressed source/model namespace', async () => {
+            fetchMock.mockResolvedValueOnce(mockFetchResponse([7, 8]));
             fetchMock.mockResolvedValueOnce(mockFetchResponse({}));
-
             await backend.purgeVectorIndex('test-collection', defaultSettings);
-
-            expect(fetchMock).toHaveBeenCalledWith(
-                '/api/vector/purge',
-                expect.objectContaining({
-                    method: 'POST',
-                })
-            );
+            expect(fetchMock.mock.calls.map(c => c[0])).toEqual(['/api/vector/list', '/api/vector/delete']);
+            expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ collectionId: 'test-collection', hashes: [7, 8], source: defaultSettings.source });
         });
-
-        it('should throw on purge failure', async () => {
-            fetchMock.mockResolvedValueOnce(mockFetchError(500, 'Purge failed'));
-
-            await expect(backend.purgeVectorIndex('test-collection', defaultSettings))
-                .rejects.toThrow('Failed to purge collection');
+        it('surfaces deletion failure during scoped purge', async () => {
+            fetchMock.mockResolvedValueOnce(mockFetchResponse([7]));
+            fetchMock.mockResolvedValueOnce(mockFetchError(500, 'Delete failed'));
+            await expect(backend.purgeVectorIndex('test-collection', defaultSettings)).rejects.toThrow('Failed to delete vectors');
         });
     });
 

@@ -54,7 +54,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
 
     // Check if backend supports native hybrid search and user prefers it
     const preferNative = settings.hybrid_native_prefer !== false;
-    if (preferNative && fusionMethod !== 'heuristic_weighted' &&
+    if (!queryVector && preferNative && fusionMethod !== 'heuristic_weighted' &&
         backend.supportsHybridSearch && backend.supportsHybridSearch()) {
         console.log(`[HybridSearch] Using native hybrid search (${backend.constructor.name})`);
         try {
@@ -122,6 +122,7 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         );
         console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
     } catch (error) {
+        if (queryVector) throw error;
         console.error(`[HybridSearch] Vector query failed:`, error);
     }
 

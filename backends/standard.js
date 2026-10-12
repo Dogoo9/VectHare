@@ -26,6 +26,8 @@ import AsyncUtils from '../utils/async-utils.js';
  * Get the model value from settings based on provider
  */
 function getModelFromSettings(settings) {
+    const locator = settings.collection_locator || settings.storageLocator;
+    if (locator) return locator.model ?? "";
     const modelField = getModelField(settings.source);
     return modelField ? settings[modelField] || '' : '';
 }
@@ -61,7 +63,6 @@ function getProviderSpecificParams(settings, isQuery = false) {
             params.apiUrl = settings.use_alt_endpoint
                 ? settings.alt_endpoint_url
                 : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-            console.log(`VectHare DEBUG llamacpp: use_alt_endpoint=${settings.use_alt_endpoint}, alt_endpoint_url="${settings.alt_endpoint_url}", ST_url="${textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]}", final apiUrl="${params.apiUrl}"`);
             break;
 
         case 'vllm':
@@ -172,10 +173,7 @@ export class StandardBackend extends VectorBackend {
 
         if (!response.ok) {
             // Collection doesn't exist or error
-            if (response.status === 500) {
-                // Likely collection doesn't exist
-                return [];
-            }
+
             const errorBody = await response.text().catch(() => 'No response body');
             throw new Error(`Failed to get saved hashes: ${response.status} ${response.statusText} - ${errorBody}`);
         }
@@ -192,6 +190,7 @@ export class StandardBackend extends VectorBackend {
     async insertVectorItems(collectionId, items, settings) {
         if (items.length === 0) return;
 
+        if (items.some(i => i.vector) && !this.pluginAvailable && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, false);
         const model = getModelFromSettings(settings);
 
@@ -243,15 +242,15 @@ export class StandardBackend extends VectorBackend {
                         vector: item.vector,
                         metadata: {
                             ...item.metadata,
-                            keywords: item.keywords || [],
-                            importance: item.importance,
-                            customWeights: item.customWeights,
-                            disabledKeywords: item.disabledKeywords,
-                            chunkGroup: item.chunkGroup,
-                            conditions: item.conditions,
-                            summary: item.summary,
-                            isSummaryChunk: item.isSummaryChunk,
-                            parentHash: item.parentHash,
+                            keywords: item.keywords ?? item.metadata?.keywords ?? [],
+                            importance: item.importance ?? item.metadata?.importance,
+                            customWeights: item.customWeights ?? item.metadata?.customWeights,
+                            disabledKeywords: item.disabledKeywords ?? item.metadata?.disabledKeywords,
+                            chunkGroup: item.chunkGroup ?? item.metadata?.chunkGroup,
+                            conditions: item.conditions ?? item.metadata?.conditions,
+                            summary: item.summary ?? item.metadata?.summary,
+                            isSummaryChunk: item.isSummaryChunk ?? item.metadata?.isSummaryChunk,
+                            parentHash: item.parentHash ?? item.metadata?.parentHash,
                         },
                     };
                     // Debug: Log first item's metadata
@@ -333,6 +332,18 @@ export class StandardBackend extends VectorBackend {
      * Uses native ST API
      */
     async queryCollection(collectionId, searchText, topK, settings, queryVector = null) {
+        if (queryVector && this.pluginAvailable) {
+            const response = await fetch('/api/plugins/similharity/chunks/query', {
+                method: 'POST', headers: getRequestHeaders(),
+                body: JSON.stringify({ backend: 'vectra', collectionId, queryVector, topK,
+                    threshold: settings.score_threshold || 0, source: settings.source || 'transformers', model: getModelFromSettings(settings) }),
+            });
+            if (!response.ok) throw new Error(`Precomputed vector query failed: HTTP ${response.status}`);
+            const data = await response.json();
+            if (!data.success || !Array.isArray(data.results)) throw new Error('Invalid precomputed vector query response.');
+            return { hashes: data.results.map(r => r.hash), metadata: data.results.map(r => ({ ...r.metadata, text: r.text, hash: r.hash, score: r.score })) };
+        }
+        if (queryVector && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, true);
         const model = getModelFromSettings(settings);
 
@@ -381,6 +392,12 @@ export class StandardBackend extends VectorBackend {
      * Uses native ST API
      */
     async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings, queryVector = null) {
+        if (queryVector && this.pluginAvailable) {
+            const results = {};
+            for (const id of collectionIds) results[id] = await this.queryCollection(id, searchText, topK, { ...settings, score_threshold: threshold }, queryVector);
+            return results;
+        }
+        if (queryVector && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, true);
         const model = getModelFromSettings(settings);
 
@@ -433,18 +450,16 @@ export class StandardBackend extends VectorBackend {
      * Uses native ST API
      */
     async purgeVectorIndex(collectionId, settings) {
-        const response = await fetch('/api/vector/purge', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                collectionId: collectionId,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`Failed to purge collection: ${response.status} ${response.statusText} - ${errorBody}`);
+        if (this.pluginAvailable) {
+            const response = await fetch('/api/plugins/similharity/chunks/purge', {
+                method: 'POST', headers: getRequestHeaders(),
+                body: JSON.stringify({ backend: 'vectra', collectionId, source: settings.source || 'transformers', model: getModelFromSettings(settings) }),
+            });
+            if (!response.ok) throw new Error(`Failed to purge collection: HTTP ${response.status}`);
+            return;
         }
+        const hashes = await this.getSavedHashes(collectionId, settings);
+        if (hashes.length) await this.deleteVectorItems(collectionId, hashes, settings);
     }
 
     async purgeFileVectorIndex(collectionId, settings) {

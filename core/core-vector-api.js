@@ -43,6 +43,10 @@ import { applyBM25Scoring } from './bm25-scorer.js';
 import { hybridSearch } from './hybrid-search.js';
 import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, purgeAllLexicalIndexes, searchLexicalIndex } from './lexical-index.js';
 import { assertWritableEmbedding, collectionStorageKey, storageSettings } from './collection-portability.js';
+import { embedLocal } from '../providers/local-embeddings.js';
+import { resolveCollectionSettings, physicalCollectionId, embeddingProfileKey, collectionMutation } from './collection-runtime.js';
+import { getStorageHashes } from './storage-hashes.js';
+import { completeLexicalCoverage } from './lexical-index.js';
 import AsyncUtils from '../utils/async-utils.js';
 import StringUtils from '../utils/string-utils.js';
 import {
@@ -58,7 +62,14 @@ import {
 // Get shared WebLLM provider singleton (lazy-initialized)
 const webllmProvider = getWebLlmProvider();
 
-function requirePrecomputedForReassignment(settings, routed, vector = null) {
+function usesClientEmbeddings(settings) {
+    return ['webllm', 'koboldcpp', 'bananabread'].includes(settings.source) || !!settings.local_embedding_profile;
+}
+
+function requirePrecomputedForReassignment(settings, routed, vector = null, backend = null) {
+    if (vector && (routed.vector_backend || 'standard') === 'standard' && !backend?.pluginAvailable && !['koboldcpp', 'webllm'].includes(routed.source)) {
+        throw new Error('Native SillyTavern only consumes precomputed vectors in koboldcpp/webllm namespaces. Rebuild into a new webllm namespace or install the documented upstream API enhancement.');
+    }
     if (routed.source !== settings.source && !vector) {
         throw new Error('This embedding reassignment requires companion-server support for precomputed vectors with an independent storage namespace. Use lexical-only retrieval or rebuild instead.');
     }
@@ -222,7 +233,6 @@ export function getVectorsRequestBody(args = {}, settings) {
             break;
         case 'llamacpp':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-            console.log(`VectHare DEBUG llamacpp (core-vector-api): use_alt_endpoint=${settings.use_alt_endpoint}, alt_endpoint_url="${settings.alt_endpoint_url}", ST_url="${textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]}", final apiUrl="${body.apiUrl}"`);
             break;
         case 'vllm':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
@@ -263,7 +273,22 @@ export function getVectorsRequestBody(args = {}, settings) {
  * @param {Function} onProgress - Optional callback (embedded, total) => void for progress updates
  * @returns {Promise<object>} Additional arguments
  */
-export async function getAdditionalArgs(items, settings, onProgress = null) {
+export function configuredLocalEmbeddingProfile(settings, source, embedding) {
+    if (!['koboldcpp', 'llamacpp'].includes(source)) return null;
+    const type = source === 'koboldcpp' ? textgen_types.KOBOLDCPP : textgen_types.LLAMACPP;
+    const endpoint = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[type];
+    if (!endpoint) return null;
+    return { source, endpoint, model: settings[`${source}_model`] || source,
+        fingerprint: embedding.fingerprint, probes: embedding.probes };
+}
+
+export async function getAdditionalArgs(items, settings, onProgress = null, mode = 'document') {
+    if (settings.local_embedding_profile) {
+        const profile = { ...settings.local_embedding_profile, apiKey: settings.local_embedding_api_key };
+        const cleaned = profile.fingerprint?.textCleaning === 'strip-markdown-html' ? items.map(t => stripFormatting(t) || t) : items;
+        const result = await embedLocal(cleaned, profile, { mode, signal: settings.embedding_signal, onProgress });
+        return { embeddings: Object.fromEntries(items.map((t, i) => [t, result.vectors[i]])), model: result.model };
+    }
     const args = {};
     switch (settings.source) {
         case 'webllm':
@@ -331,97 +356,11 @@ async function createWebLlmEmbeddings(items, settings) {
  * @returns {Promise<{embeddings: Record<string, number[]>, model: string}>} Calculated embeddings
  */
 async function createKoboldCppEmbeddings(items, settings, onProgress = null) {
-    // Clean text before embedding (strip HTML/Markdown)
-    const cleanedItems = items.map(item => stripFormatting(item) || item);
-
-    // Batch size for progress tracking
-    const BATCH_SIZE = 10;
-    const allEmbeddings = /** @type {Record<string, number[]>} */ ({});
-    let modelName = 'koboldcpp';
-
-    // Process in batches to show progress
-    for (let i = 0; i < cleanedItems.length; i += BATCH_SIZE) {
-        const batchItems = cleanedItems.slice(i, Math.min(i + BATCH_SIZE, cleanedItems.length));
-        const originalBatchItems = items.slice(i, Math.min(i + BATCH_SIZE, items.length));
-
-        const result = await dynamicRateLimiter.execute(async () => {
-            return await AsyncUtils.retry(async () => {
-                const serverUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
-                if (!serverUrl) {
-                    throw new Error('KoboldCpp URL not found');
-                }
-
-                const cleanUrl = serverUrl.replace(/\/$/, '');
-                const response = await fetch(`${cleanUrl}/v1/embeddings`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        input: batchItems,
-                        model: settings.koboldcpp_model || 'koboldcpp',
-                    }),
-                });
-
-                if (!response.ok) {
-                    // Try legacy endpoint if v1 fails (fallback)
-                    if (response.status === 404) {
-                        console.warn('VectHare: KoboldCpp /v1/embeddings not found, trying legacy endpoint...');
-                        // Fallthrough to retry or handle legacy?
-                        // Better to throw specific error so we can potentially retry with legacy logic if we wanted,
-                        // but for now let's stick to the directive of using OpenAI compatible endpoint.
-                    }
-                    throw new Error(`Failed to get KoboldCpp embeddings: ${response.status} ${response.statusText}`);
-                }
-
-                const data = await response.json();
-
-                // OpenAI format: { data: [{ embedding: [], index: 0, ... }, ...], model: "..." }
-                if (!data.data || !Array.isArray(data.data) || data.data.length !== batchItems.length) {
-                     throw new Error('Invalid response from KoboldCpp embeddings (OpenAI format)');
-                }
-
-                // Sort by index to ensure order matches items
-                data.data.sort((a, b) => a.index - b.index);
-
-                const batchEmbeddings = {};
-                for (let j = 0; j < data.data.length; j++) {
-                    const embedding = data.data[j].embedding;
-                    if (!Array.isArray(embedding) || embedding.length === 0) {
-                        throw new Error('KoboldCpp returned an empty embedding.');
-                    }
-                    // Map back to original items (not cleaned) for hash consistency
-                    batchEmbeddings[originalBatchItems[j]] = embedding;
-                }
-
-                return {
-                    embeddings: batchEmbeddings,
-                    model: data.model || 'koboldcpp',
-                };
-            }, {
-                ...RETRY_CONFIG,
-                onRetry: (attempt, error) => {
-                    console.warn(`VectHare: KoboldCpp embedding retry ${attempt} - ${error.message}`);
-                }
-            });
-        }, settings);
-
-        // Merge batch embeddings into all embeddings
-        Object.assign(allEmbeddings, result.embeddings);
-        modelName = result.model;
-
-        // Call progress callback after each batch
-        const embeddedSoFar = Math.min(i + BATCH_SIZE, items.length);
-        if (onProgress) {
-            console.log(`[KoboldCpp] Calling progress callback: ${embeddedSoFar}/${items.length}`);
-            onProgress(embeddedSoFar, items.length);
-        }
-    }
-
-    return {
-        embeddings: allEmbeddings,
-        model: modelName,
-    };
+    const endpoint = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
+    const result = await dynamicRateLimiter.execute(() => embedLocal(items.map(t => stripFormatting(t) || t), {
+        endpoint, model: settings.koboldcpp_model || 'koboldcpp', batchSize: 10,
+    }, { onProgress, signal: settings.embedding_signal }), settings);
+    return { embeddings: Object.fromEntries(items.map((t, i) => [t, result.vectors[i]])), model: result.model };
 }
 
 /**
@@ -585,10 +524,9 @@ export function throwIfSourceInvalid(settings) {
  * @param {boolean} includeMetadata If true, returns {hashes: [], metadata: []} instead of just hashes
  * @returns {Promise<number[]|{hashes: number[], metadata: object[]}>} Saved hashes or full data
  */
-export async function getSavedHashes(collectionId, settings, includeMetadata = false) {
+async function getSavedHashesResolved(collectionId, settings, includeMetadata = false) {
     const routed = storageSettings(settings);
-    const backend = await getBackend(routed);
-    const hashes = await backend.getSavedHashes(collectionId, routed);
+    const hashes = await getStorageHashes(collectionId, routed);
 
     if (!includeMetadata) {
         return hashes;
@@ -596,15 +534,15 @@ export async function getSavedHashes(collectionId, settings, includeMetadata = f
 
     // Use unified chunks API to get full metadata (works with all backends)
     try {
-        const backendName = settings.vector_backend || 'standard';
+        const backendName = routed.vector_backend || 'standard';
         const response = await fetch('/api/plugins/similharity/chunks/list', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 backend: backendName === 'standard' ? 'vectra' : backendName,
                 collectionId: collectionId,
-                source: settings.source || 'transformers',
-                model: settings.model || '',
+                source: routed.source || 'transformers',
+                model: routed.model || '',
                 limit: 10000
             })
         });
@@ -636,17 +574,16 @@ export async function getSavedHashes(collectionId, settings, includeMetadata = f
  * @param {Function} onProgress - Optional callback (embedded, total) => void for progress updates
  * @returns {Promise<void>}
  */
-export async function insertVectorItems(collectionId, items, settings, onProgress = null) {
+async function insertVectorItemsResolved(collectionId, items, settings, onProgress = null) {
     assertWritableEmbedding(settings);
     const routed = storageSettings(settings);
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation
-    const clientSideEmbeddingSources = ['webllm', 'koboldcpp', 'bananabread'];
 
     try {
         // If source requires client-side embeddings, use streaming approach
-        if (clientSideEmbeddingSources.includes(settings.source)) {
+        if (usesClientEmbeddings(settings)) {
             console.log(`VectHare: Streaming embeddings and writing for ${settings.source}...`);
 
             // Extract text strings - getAdditionalArgs expects string[], not objects
@@ -753,7 +690,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
 
             if (embedding && Array.isArray(embedding) && embedding.length > 0) {
                 // Validate embedding values
-                const isValidEmbedding = embedding.every(val => typeof val === 'number' && !isNaN(val));
+                const isValidEmbedding = embedding.every(Number.isFinite) && embedding.some(val => val !== 0) && (!settings.embedding_fingerprint?.dimension || embedding.length === settings.embedding_fingerprint.dimension);
                 if (!isValidEmbedding) {
                     console.error(`VectHare: Invalid embedding values for item ${i + j}:`, embedding.slice(0, 5));
                     missingEmbeddings++;
@@ -775,6 +712,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
         console.log(`VectHare: Writing batch ${batchNum} to database (${itemsToWrite.length} items)`);
         try {
             await AsyncUtils.retry(async () => {
+                requirePrecomputedForReassignment(settings, routed, itemsToWrite[0]?.vector, backend);
                 await backend.insertVectorItems(collectionId, itemsToWrite, routed);
             }, RETRY_CONFIG);
         } catch (error) {
@@ -800,7 +738,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
  * @param {object} settings VectHare settings object
  * @returns {Promise<void>}
  */
-export async function deleteVectorItems(collectionId, hashes, settings) {
+async function deleteVectorItemsResolved(collectionId, hashes, settings) {
     const routed = storageSettings(settings);
     const backend = await getBackend(routed);
     try {
@@ -830,40 +768,40 @@ export async function deleteVectorItems(collectionId, hashes, settings) {
  * @param {object} settings VectHare settings object
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes and metadata of the results
  */
-export async function queryCollection(collectionId, searchText, topK, settings) {
+async function queryCollectionResolved(collectionId, searchText, topK, settings) {
     const routed = storageSettings(settings);
     const lexicalKey = collectionStorageKey(collectionId, settings);
     if (settings.retrieval_mode === 'lexical_only') {
+        await requireCompleteLexical(collectionId, settings);
         const matches = searchLexicalIndex(lexicalKey, searchText, topK);
         return { hashes: matches.map(item => item.hash), metadata: matches.map(item => ({ ...item.metadata, bm25Score: item.bm25Score, retrievalMode: 'lexical-only', score: undefined })) };
     }
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation
-    const clientSideEmbeddingSources = ['webllm', 'koboldcpp', 'bananabread'];
     let queryVector = null;
 
     // If source requires client-side embeddings, generate query vector
-    if (clientSideEmbeddingSources.includes(settings.source)) {
+    if (usesClientEmbeddings(settings)) {
         const queryItem = [searchText];
         try {
-            const additionalArgs = await getAdditionalArgs(queryItem, settings);
+            const additionalArgs = await getAdditionalArgs(queryItem, settings, null, 'query');
             // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
             if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
                 queryVector = additionalArgs.embeddings[searchText];
             } else {
-                // VEC-35: Fallback to server-side embedding instead of failing completely
-                console.warn(`[VectHare] Client-side embedding generation returned empty result for ${settings.source}, falling back to server-side embedding`);
+                // A failed client embedding must not contact another inference provider.
+                throw new Error('Client embedding returned no query vector.');
             }
         } catch (clientEmbedError) {
-            // VEC-35: Fallback to server-side embedding when client-side fails
-            console.warn(`[VectHare] Client-side embedding failed for ${settings.source}: ${clientEmbedError.message}. Falling back to server-side embedding.`);
+            // Propagate local failures without server or cloud fallback.
+            throw clientEmbedError;
         }
     }
 
     // Check if hybrid search is enabled
     if (settings.hybrid_search_enabled) {
-        requirePrecomputedForReassignment(settings, routed, queryVector);
+        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         console.log('[VectHare] Hybrid search enabled, dispatching to hybrid search module');
         const queryStart = Date.now();
         try {
@@ -889,7 +827,7 @@ export async function queryCollection(collectionId, searchText, topK, settings) 
     const queryStart = Date.now();
     let rawResults;
     try {
-        requirePrecomputedForReassignment(settings, routed, queryVector);
+        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         rawResults = await backend.queryCollection(collectionId, searchText, overfetchAmount, routed, queryVector);
         const queryLatency = Date.now() - queryStart;
         recordQuery(settings?.vector_backend || 'standard', queryLatency);
@@ -982,8 +920,9 @@ function scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmou
  * @param {object} settings VectHare settings object
  * @returns {Promise<Record<string, { hashes: number[], metadata: object[] }>>} - Results mapped to collection IDs
  */
-export async function queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+async function queryMultipleCollectionsResolved(collectionIds, searchText, topK, threshold, settings) {
     if (settings.retrieval_mode === 'lexical_only') {
+        await Promise.all(collectionIds.map(id => requireCompleteLexical(id, settings)));
         return Object.fromEntries(collectionIds.map(id => {
             const matches = searchLexicalIndex(collectionStorageKey(id, settings), searchText, topK);
             return [id, { hashes: matches.map(item => item.hash), metadata: matches.map(item => ({ ...item.metadata, bm25Score: item.bm25Score, retrievalMode: 'lexical-only', score: undefined })) }];
@@ -994,25 +933,24 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation
-    const clientSideEmbeddingSources = ['webllm', 'koboldcpp', 'bananabread'];
     let queryVector = null;
 
     // Generate query vector once for all collections (efficiency)
     const embeddingStart = performance.now();
-    if (clientSideEmbeddingSources.includes(settings.source)) {
+    if (usesClientEmbeddings(settings)) {
         try {
             // getAdditionalArgs expects string[], not objects
-            const additionalArgs = await getAdditionalArgs([searchText], settings);
+            const additionalArgs = await getAdditionalArgs([searchText], settings, null, 'query');
             // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
             if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
                 queryVector = additionalArgs.embeddings[searchText];
             } else {
-                // VEC-35: Fallback to server-side embedding instead of failing completely
-                console.warn(`[VectHare] Client-side embedding generation returned empty result for ${settings.source}, falling back to server-side embedding`);
+                // A failed client embedding must not contact another inference provider.
+                throw new Error('Client embedding returned no query vector.');
             }
         } catch (clientEmbedError) {
-            // VEC-35: Fallback to server-side embedding when client-side fails
-            console.warn(`[VectHare] Client-side embedding failed for ${settings.source}: ${clientEmbedError.message}. Falling back to server-side embedding.`);
+            // Propagate local failures without server or cloud fallback.
+            throw clientEmbedError;
         }
     }
     const queryEmbeddingMs = performance.now() - embeddingStart;
@@ -1032,7 +970,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     // Check if hybrid search is enabled - process each collection with hybrid search
     if (settings.hybrid_search_enabled) {
         console.log('[VectHare] Hybrid search enabled for multi-collection query');
-        requirePrecomputedForReassignment(settings, routed, queryVector);
+        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         const processedResults = {};
         const backendStart = performance.now();
         const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
@@ -1061,7 +999,7 @@ export async function queryMultipleCollections(collectionIds, searchText, topK, 
     const backendStart = performance.now();
     let rawResults;
     try {
-        requirePrecomputedForReassignment(settings, routed, queryVector);
+        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         rawResults = await backend.queryMultipleCollections(collectionIds, searchText, overfetchAmount, threshold, routed, queryVector);
         const queryLatency = Date.now() - queryStart;
         recordQuery(settings?.vector_backend || 'standard', queryLatency);
@@ -1146,7 +1084,7 @@ export async function queryActiveCollections(collectionIds, searchText, topK, th
  * @param {object} settings VectHare settings object
  * @returns {Promise<boolean>} True if deleted, false if not
  */
-export async function purgeVectorIndex(collectionId, settings) {
+async function purgeVectorIndexResolved(collectionId, settings) {
     try {
         const routed = storageSettings(settings);
         const backend = await getBackend(routed);
@@ -1168,7 +1106,7 @@ export async function purgeVectorIndex(collectionId, settings) {
  * @param {object} settings VectHare settings object
  * @returns {Promise<void>}
  */
-export async function purgeFileVectorIndex(collectionId, settings) {
+async function purgeFileVectorIndexResolved(collectionId, settings) {
     try {
         console.log(`VectHare: Purging file vector index for collection ${collectionId}`);
         const routed = storageSettings(settings);
@@ -1210,11 +1148,17 @@ export async function purgeAllVectorIndexes(settings) {
  * @param {string} newText - New text content
  * @param {object} settings - VectHare settings
  */
-export async function updateChunkText(collectionId, hash, newText, settings) {
+async function updateChunkTextResolved(collectionId, hash, newText, settings) {
     assertWritableEmbedding(settings);
     const routed = storageSettings(settings);
     const backend = await getBackend(routed);
-    const result = await backend.updateChunkText(collectionId, hash, newText, routed);
+    let result;
+    if (usesClientEmbeddings(settings)) {
+        throw new Error('Safe text editing with client-generated vectors requires an upstream atomic chunk vector update. Rebuild into a new collection to change text; no chunk was modified.');
+    } else {
+        requirePrecomputedForReassignment(settings, routed);
+        result = await backend.updateChunkText(collectionId, hash, newText, routed);
+    }
     indexLexicalItems(collectionStorageKey(collectionId, settings), [{ hash, text: newText }]);
     return result;
 }
@@ -1226,8 +1170,83 @@ export async function updateChunkText(collectionId, hash, newText, settings) {
  * @param {object} metadata - Metadata to update (keywords, enabled, etc.)
  * @param {object} settings - VectHare settings
  */
-export async function updateChunkMetadata(collectionId, hash, metadata, settings) {
+async function updateChunkMetadataResolved(collectionId, hash, metadata, settings) {
     const routed = storageSettings(settings);
     const backend = await getBackend(routed);
     return await backend.updateChunkMetadata(collectionId, hash, metadata, routed);
+}
+
+export async function getSavedHashes(collectionId, settings, includeMetadata = false) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await getSavedHashesResolved(id, resolved, includeMetadata);
+}
+
+export async function insertVectorItems(collectionId, items, settings, onProgress = null) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => insertVectorItemsResolved(id, items, resolved, onProgress));
+}
+
+export async function deleteVectorItems(collectionId, hashes, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => deleteVectorItemsResolved(id, hashes, resolved));
+}
+
+export async function purgeVectorIndex(collectionId, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => purgeVectorIndexResolved(id, resolved));
+}
+
+export async function purgeFileVectorIndex(collectionId, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => purgeFileVectorIndexResolved(id, resolved));
+}
+
+export async function updateChunkText(collectionId, hash, newText, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => updateChunkTextResolved(id, hash, newText, resolved));
+}
+
+export async function updateChunkMetadata(collectionId, hash, metadata, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await collectionMutation(id, resolved, () => updateChunkMetadataResolved(id, hash, metadata, resolved));
+}
+
+export async function queryCollection(collectionId, searchText, topK, settings) {
+    const resolved = resolveCollectionSettings(collectionId, settings);
+    const id = physicalCollectionId(collectionId, resolved);
+    return await queryCollectionResolved(id, searchText, topK, resolved);
+}
+
+async function requireCompleteLexical(id, settings) {
+    const routed = storageSettings(settings);
+    const hashes = await getStorageHashes(id, routed);
+    if (!completeLexicalCoverage(collectionStorageKey(id, settings), hashes)) {
+        throw new Error('Lexical-only retrieval unavailable: incomplete text coverage. Rebuild the lexical index from all stored chunks.');
+    }
+}
+
+export async function queryMultipleCollections(collectionIds, searchText, topK, threshold, settings) {
+    const groups = new Map();
+    for (const logicalId of collectionIds) {
+        const resolved = resolveCollectionSettings(logicalId, settings);
+        const key = embeddingProfileKey(resolved);
+        if (!groups.has(key)) groups.set(key, { settings: resolved, entries: [] });
+        groups.get(key).entries.push({ logicalId, id: physicalCollectionId(logicalId, resolved) });
+    }
+    const results = {};
+    const timings = { queryEmbeddingMs: 0, backendSearchMs: 0, totalRetrievalMs: 0 };
+    for (const group of groups.values()) {
+        const raw = await queryMultipleCollectionsResolved([...new Set(group.entries.map(e => e.id))], searchText, topK, threshold, { ...group.settings, collection_locator: group.settings.collection_locator ? { ...group.settings.collection_locator, collectionId: undefined } : null });
+        for (const entry of group.entries) results[entry.logicalId] = raw[entry.id] || { hashes: [], metadata: [] };
+        for (const field of Object.keys(timings)) timings[field] += raw._timings?.[field] || 0;
+    }
+    Object.defineProperty(results, '_timings', { value: timings, enumerable: false });
+    return results;
 }

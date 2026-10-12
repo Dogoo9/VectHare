@@ -12,6 +12,7 @@
 import { extension_settings } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { parseRegistryKey } from './collection-ids.js';
+import { storedCollectionKey } from './collection-runtime.js';
 import { matchesTextPattern } from './plain-text-matcher.js';
 
 // ============================================================================
@@ -246,20 +247,7 @@ function resolveStoredCollectionKey(collectionId) {
         return null;
     }
 
-    const collections = extension_settings.vecthare.collections;
-    if (Object.prototype.hasOwnProperty.call(collections, collectionId)) {
-        return collectionId;
-    }
-
-    const targetBareId = parseRegistryKey(collectionId).collectionId || collectionId;
-    for (const key of Object.keys(collections)) {
-        const bareId = parseRegistryKey(key).collectionId || key;
-        if (bareId === targetBareId) {
-            return key;
-        }
-    }
-
-    return null;
+    return storedCollectionKey(collectionId);
 }
 
 /**
@@ -306,6 +294,8 @@ export function setCollectionMeta(collectionId, data) {
 
     const key = resolveStoredCollectionKey(collectionId) || collectionId;
     const existing = extension_settings.vecthare.collections[key] || {};
+    const migration = data.migration || existing.migration;
+    if (data.enabled && migration && !["ready", "active"].includes(migration.status)) throw new Error("An unverified migration target cannot be activated.");
 
     extension_settings.vecthare.collections[key] = {
         ...defaultCollectionMeta,
@@ -366,7 +356,7 @@ export function setCollectionEnabled(collectionId, enabled) {
  */
 export function isCollectionEnabled(collectionId) {
     const meta = getCollectionMeta(collectionId);
-    return meta.enabled !== false;
+    return meta.enabled !== false && (!meta.migration || ["ready", "active"].includes(meta.migration.status));
 }
 
 // ============================================================================
@@ -381,7 +371,11 @@ function normalizeCollectionKey(collectionId) {
 
 function collectionKeysMatch(a, b) {
     if (!a || !b) return false;
-    return String(a) === String(b) || normalizeCollectionKey(a) === normalizeCollectionKey(b);
+    if (String(a) === String(b)) return true;
+    const left = parseRegistryKey(a), right = parseRegistryKey(b);
+    if (left.backend && right.backend && left.backend !== right.backend) return false;
+    if (left.source && right.source && left.source !== right.source) return false;
+    return normalizeCollectionKey(a) === normalizeCollectionKey(b);
 }
 
 function ensureChatCollectionPoliciesObject() {
@@ -690,7 +684,7 @@ export function cleanupOrphanedMeta(actualCollectionIds) {
     const orphaned = [];
 
     for (const collectionId in extension_settings.vecthare.collections) {
-        if (!actualSet.has(collectionId)) {
+        if (!actualSet.has(collectionId) && !extension_settings.vecthare.collections[collectionId]?.migration) {
             orphaned.push(collectionId);
         }
     }
@@ -937,6 +931,13 @@ export function ensureCollectionMeta(collectionId, initialData = {}) {
     ensureCollectionsObject();
 
     if (!extension_settings.vecthare.collections[collectionId]) {
+        const legacyKey = resolveStoredCollectionKey(collectionId);
+        if (legacyKey) {
+            extension_settings.vecthare.collections[collectionId] = extension_settings.vecthare.collections[legacyKey];
+            delete extension_settings.vecthare.collections[legacyKey];
+            saveSettingsDebounced();
+            return;
+        }
         // Determine collection type for temporal decay defaults
         // Check initialData.type, or infer from scope, or parse from collectionId
         let collectionType = initialData.type || initialData.scope || 'unknown';
@@ -1120,7 +1121,7 @@ export async function shouldCollectionActivate(collectionId, context) {
     };
 
     // Priority 1: Check if collection is disabled entirely
-    if (meta.enabled === false) {
+    if (meta.enabled === false || (meta.migration && !["ready", "active"].includes(meta.migration.status))) {
         console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ DISABLED`);
         recordDecision('skipped', 'Collection is disabled');
         return false;

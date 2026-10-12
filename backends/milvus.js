@@ -29,6 +29,8 @@ const BACKEND_TYPE = 'milvus';
  * Get the model value from settings based on provider
  */
 function getModelFromSettings(settings) {
+    const locator = settings.collection_locator || settings.storageLocator;
+    if (locator) return locator.model ?? "";
     const modelField = getModelField(settings.source);
     return modelField ? settings[modelField] || '' : '';
 }
@@ -223,15 +225,15 @@ export class MilvusBackend extends VectorBackend {
                     metadata: {
                         ...item.metadata,
                         // Pass through VectHare-specific fields
-                        importance: item.importance,
-                        keywords: item.keywords,
-                        customWeights: item.customWeights,
-                        disabledKeywords: item.disabledKeywords,
-                        chunkGroup: item.chunkGroup,
-                        conditions: item.conditions,
-                        summary: item.summary,
-                        isSummaryChunk: item.isSummaryChunk,
-                        parentHash: item.parentHash,
+                        importance: item.importance ?? item.metadata?.importance,
+                        keywords: item.keywords ?? item.metadata?.keywords,
+                        customWeights: item.customWeights ?? item.metadata?.customWeights,
+                        disabledKeywords: item.disabledKeywords ?? item.metadata?.disabledKeywords,
+                        chunkGroup: item.chunkGroup ?? item.metadata?.chunkGroup,
+                        conditions: item.conditions ?? item.metadata?.conditions,
+                        summary: item.summary ?? item.metadata?.summary,
+                        isSummaryChunk: item.isSummaryChunk ?? item.metadata?.isSummaryChunk,
+                        parentHash: item.parentHash ?? item.metadata?.parentHash,
                     }
                 })),
                 source: settings.source || 'transformers',
@@ -270,7 +272,7 @@ export class MilvusBackend extends VectorBackend {
         }
     }
 
-    async queryCollection(collectionId, searchText, topK, settings) {
+    async queryCollection(collectionId, searchText, topK, settings, queryVector = null) {
         const { type, sourceId } = this._parseCollectionId(collectionId);
 
         const response = await fetch('/api/plugins/similharity/chunks/query', {
@@ -280,6 +282,7 @@ export class MilvusBackend extends VectorBackend {
                 backend: BACKEND_TYPE,
                 collectionId: 'vecthare_main',
                 searchText: searchText,
+                ...(queryVector ? { queryVector } : {}),
                 topK: topK,
                 threshold: 0.0,
                 source: settings.source || 'transformers',

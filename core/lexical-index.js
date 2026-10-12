@@ -54,6 +54,15 @@ export function loadLexicalIndex(collectionId) {
     return memoryIndexes.get(collectionId) || emptyIndex();
 }
 
+/** Coverage is checked against storage hashes, never inferred from a partial ANN result. */
+export function completeLexicalCoverage(collectionId, hashes) {
+    const index = loadLexicalIndex(collectionId);
+    return Array.isArray(hashes) && hashes.length === index.documentCount && hashes.every(hash => {
+        const item = index.documents[String(hash)];
+        return item && typeof item.text === 'string' && item.text.trim();
+    });
+}
+
 function save(collectionId, index) {
     memoryIndexes.set(collectionId, index);
     const persistent = storage();

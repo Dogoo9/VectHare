@@ -370,6 +370,11 @@ export async function getBackend(settings, preferredBackend = null) {
         || extension_settings.vecthare?.vector_backend
         || 'standard';
 
+    if (settings?._storageReadOnly) {
+        const normalized = normalizeBackendName(backendName);
+        if (!BACKENDS[normalized]) throw new Error(`Unknown vector backend: ${normalized}`);
+        return backendInstances[normalized] || new BACKENDS[normalized]();
+    }
     // Try to get/initialize the requested backend - throw on failure
     const backend = await initializeBackend(backendName, settings, true);
 
