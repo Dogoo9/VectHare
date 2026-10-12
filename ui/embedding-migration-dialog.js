@@ -12,27 +12,25 @@ export function openEmbeddingMigrationDialog(collection, settings, onChanged = (
     const locator = meta.storageLocator || { backend: collection.backend === 'vectra' ? 'standard' : collection.backend,
         source: collection.source, model: collection.model ?? '', collectionId: collection.id };
     const overlay = document.createElement('div');
-    overlay.className = 'vecthare-modal-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:10010;background:#000b;display:grid;place-items:center';
-    overlay.innerHTML = `<section role="dialog" aria-modal="true" aria-label="Embedding Provider / Migrate"
-        style="background:var(--SmartThemeBlurTintColor,#222);color:var(--SmartThemeBodyColor,#eee);padding:24px;max-width:700px;width:90%;max-height:90vh;overflow:auto;border-radius:12px">
+    overlay.className = 'vecthare-modal-overlay vecthare-embedding-migration-overlay';
+    overlay.innerHTML = `<section class="vecthare-embedding-migration-dialog" role="dialog" aria-modal="true" aria-label="Embedding Provider / Migrate">
         <h3>Embedding Provider / Migrate</h3><p data-current></p>
         <p>Matching filenames or 768 dimensions prove nothing. Compatible switching requires complete historical provenance and saved document/query probes. Unknown collections need a new text rebuild.</p>
-        <label>Inference provider <select data-source><option value="llamacpp">llama.cpp / local OpenAI-compatible</option><option value="koboldcpp">KoboldCpp</option></select></label>
-        <label>Endpoint <input data-endpoint type="url" placeholder="http://localhost:8080" style="width:100%"></label>
-        <label>Model ID <input data-model style="width:100%"></label>
-        <label>Embedding fingerprint (JSON) <textarea data-fingerprint rows="8" style="width:100%"></textarea></label>
+        <label>Inference provider <select class="text_pole" data-source><option value="llamacpp">llama.cpp / local OpenAI-compatible</option><option value="koboldcpp">KoboldCpp</option></select></label>
+        <label>Endpoint <input class="text_pole" data-endpoint type="url" placeholder="http://localhost:8080"></label>
+        <label>Model ID <input class="text_pole" data-model></label>
+        <label>Embedding fingerprint (JSON) <textarea class="text_pole" data-fingerprint rows="8"></textarea></label>
         <p>Use trusted artifact hashes/revisions and the server's actual pooling, tokenizer, normalization, task modes, prefixes, text cleaning, context, truncation and distance settings. This client applies prefixes and text cleaning; configure the remaining values on the server. An endpoint is contacted only when you choose Test or Rebuild. Browser CORS permission is required.</p>
-        <button data-preview>Preview</button> <button data-test>Test synthetic probes</button>
+        <div class="vecthare-migration-actions"><button class="menu_button vecthare-btn-sm" data-preview>Preview</button> <button class="menu_button vecthare-btn-sm" data-test>Test synthetic probes</button></div>
         <p data-status role="status" aria-live="polite"></p>
-        <button data-switch disabled>Confirm compatible inference switch</button>
-        <hr><label>New target collection ID <input data-target style="width:100%"></label>
+        <button class="menu_button vecthare-btn-sm vecthare-migration-primary" data-switch disabled>Confirm compatible inference switch</button>
+        <hr><label>New target collection ID <input class="text_pole" data-target></label>
         <p data-estimate></p><p>The original remains readable. Rebuild pauses edits and auto-sync, leaves the new index disabled, and checks counts, text, metadata, vectors and rankings. Cancellation/failure cleans up the new target; restart uses a new ID.</p>
-        <button data-rebuild>Confirm rebuild to new collection</button> <button data-cancel disabled>Cancel rebuild</button>
-        <button data-cutover disabled>Confirm activation switch</button> <button data-rollback disabled>Confirm rollback to original</button>
-        <hr><button data-connection-rollback>Restore previous inference connection</button>
-        <button data-lexical>Build complete BM25 index and use lexical only</button>
-        <button data-dense>Use dense retrieval</button> <button data-close>Close</button>
+        <div class="vecthare-migration-actions"><button class="menu_button vecthare-btn-sm vecthare-migration-primary" data-rebuild>Confirm rebuild to new collection</button> <button class="menu_button vecthare-btn-sm" data-cancel disabled>Cancel rebuild</button>
+        <button class="menu_button vecthare-btn-sm" data-cutover disabled>Confirm activation switch</button> <button class="menu_button vecthare-btn-sm" data-rollback disabled>Confirm rollback to original</button></div>
+        <hr><div class="vecthare-migration-actions"><button class="menu_button vecthare-btn-sm" data-connection-rollback>Restore previous inference connection</button>
+        <button class="menu_button vecthare-btn-sm" data-lexical>Build complete BM25 index and use lexical only</button>
+        <button class="menu_button vecthare-btn-sm" data-dense>Use dense retrieval</button> <button class="menu_button vecthare-btn-sm" data-close>Close</button></div>
     </section>`;
     document.body.append(overlay);
     const el = name => overlay.querySelector(`[data-${name}]`);

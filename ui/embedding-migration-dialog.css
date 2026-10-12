@@ -1,0 +1,129 @@
+/* Keep migration controls on the user's theme surface, including native inputs. */
+.vecthare-embedding-migration-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10010;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: #000b;
+    box-sizing: border-box;
+}
+
+.vecthare-embedding-migration-dialog {
+    --migration-surface: var(--SmartThemeBlurTintColor, #222);
+    --migration-text: var(--SmartThemeBodyColor, #eee);
+    --migration-border: var(--SmartThemeBorderColor, #454545);
+    width: 100%;
+    max-width: 748px;
+    max-height: calc(100dvh - 32px);
+    padding: 24px;
+    overflow: auto;
+    box-sizing: border-box;
+    border: 1px solid var(--migration-border);
+    border-radius: 12px;
+    background: var(--migration-surface);
+    color: var(--migration-text);
+    color-scheme: dark;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.vecthare-embedding-migration-dialog h3 {
+    margin: 0 0 12px;
+}
+
+.vecthare-embedding-migration-dialog label {
+    display: grid;
+    gap: 6px;
+    margin: 14px 0;
+}
+
+.vecthare-embedding-migration-dialog .text_pole {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 9px 12px;
+    box-sizing: border-box;
+    border: 1px solid var(--migration-border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--migration-surface) 85%, #000);
+    color: var(--migration-text);
+    font: inherit;
+    box-shadow: none;
+}
+
+.vecthare-embedding-migration-dialog .text_pole::placeholder {
+    color: color-mix(in srgb, var(--migration-text) 55%, var(--migration-surface));
+    opacity: 1;
+}
+
+.vecthare-embedding-migration-dialog textarea {
+    resize: vertical;
+    font-family: ui-monospace, monospace;
+    font-size: 0.9em;
+}
+
+.vecthare-migration-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.vecthare-embedding-migration-dialog .vecthare-btn-sm {
+    width: auto;
+    max-width: 100%;
+    min-height: 38px;
+    margin: 0;
+    padding: 8px 12px;
+    justify-content: center;
+    white-space: normal;
+    line-height: 1.4;
+    border: 1px solid var(--migration-border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--migration-text) 6%, var(--migration-surface));
+    color: var(--migration-text);
+    box-shadow: none;
+    text-shadow: none;
+    transform: none;
+}
+
+.vecthare-embedding-migration-dialog .vecthare-migration-primary {
+    background: color-mix(in srgb, var(--vecthare-primary, #818cf8) 12%, var(--migration-surface));
+}
+
+.vecthare-embedding-migration-dialog .vecthare-btn-sm:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--migration-text) 12%, var(--migration-surface));
+    border-color: color-mix(in srgb, var(--migration-text) 40%, var(--migration-surface));
+    color: var(--migration-text);
+    transform: none;
+    box-shadow: none;
+}
+
+.vecthare-embedding-migration-dialog .vecthare-btn-sm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.vecthare-embedding-migration-dialog :is(input, select, textarea, button):focus-visible {
+    outline: 2px solid var(--vecthare-primary-bright, #818cf8);
+    outline-offset: 2px;
+}
+
+.vecthare-embedding-migration-dialog hr {
+    margin: 20px 0;
+    border: 0;
+    border-top: 1px solid var(--migration-border);
+}
+
+.vecthare-embedding-migration-dialog [data-status]:empty {
+    display: none;
+}
+
+@media (max-width: 480px) {
+    .vecthare-embedding-migration-overlay { padding: 8px; }
+    .vecthare-embedding-migration-dialog { padding: 16px; max-height: calc(100dvh - 16px); }
+    .vecthare-migration-actions > button { flex: 1 1 100%; }
+}
