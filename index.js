@@ -64,6 +64,7 @@ const defaultSettings = {
     milvus_address: '',
     alt_endpoint_url: '',
     use_alt_endpoint: false,
+    saved_endpoints: [],
     rate_limit_calls: 5,
     rate_limit_interval: 60, // seconds
 
