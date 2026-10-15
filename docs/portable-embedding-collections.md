@@ -115,6 +115,12 @@ llama.cpp text-generation connection to use that default. Explicit alternate
 endpoints still take precedence and cannot be blank. Qdrant's `localhost` host is
 resolved by the SillyTavern server, including when accessing it from a phone.
 
+Hybrid search forwards the configured embedding endpoint to both native hybrid
+queries and vector queries used for client-side fusion. A populated browser-local
+keyword index can mask an embedding connection failure by supplying lexical
+results; a fresh browser may have no such index. If inference fails and no lexical
+candidates are available, Search Debug reports the underlying error.
+
 ## Explicit BM25 fallback
 
 The dialog can read all stored chunk texts and build a complete BM25 index without

@@ -649,13 +649,10 @@ describe('hybridSearch', () => {
         expect(lexicalResults.hashes).toHaveLength(200);
     });
 
-    it('should return empty results when vector query fails', async () => {
+    it('should report a vector query failure when no lexical candidates are available', async () => {
         mockBackend.queryCollection.mockRejectedValue(new Error('Query failed'));
 
-        const settings = {};
-        const results = await hybridSearch('test-collection', 'query', 10, settings);
-
-        expect(results).toEqual({ hashes: [], metadata: [] });
+        await expect(hybridSearch('test-collection', 'query', 10, {})).rejects.toThrow('Query failed');
     });
 
     it('should return empty results when no vector results found', async () => {
