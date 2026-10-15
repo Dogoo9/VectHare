@@ -917,6 +917,10 @@ function renderInjectionVerification(data) {
     `;
 }
 
+function vectorSearchFailures(data) {
+    return (data.trace || []).filter(entry => entry.stage === 'vector_search' && entry.error);
+}
+
 function renderCriticalFailure(data) {
     // Only show if we got 0 injected chunks
     if (data.stages.injected.length > 0) {
@@ -941,7 +945,9 @@ function renderCriticalFailure(data) {
                 <div>
                     <div class="vecthare-debug-critical-title">No Chunks Injected — ${failureSummary}</div>
                     <div class="vecthare-debug-critical-subtitle">
-                        ${data.stages.initial.length === 0
+                        ${vectorSearchFailures(data).length > 0
+                            ? 'Vector search encountered an error; see the details below'
+                            : data.stages.initial.length === 0
                             ? 'Vector search returned no results'
                             : `${data.stages.initial.length} chunks retrieved, but all were filtered out before injection`}
                     </div>
@@ -964,10 +970,10 @@ function renderCriticalFailure(data) {
                                     ${item.isOk ? '✓ OK' : '✗ FAILED'}
                                 </span>
                             </div>
-                            <div class="vecthare-debug-diagnosis-detail">${item.detail}</div>
+                            <div class="vecthare-debug-diagnosis-detail">${escapeHtml(item.detail)}</div>
                             ${item.fix ? `
                                 <div class="vecthare-debug-diagnosis-fix">
-                                    <strong>Fix:</strong> ${item.fix}
+                                    <strong>Fix:</strong> ${escapeHtml(item.fix)}
                                 </div>
                             ` : ''}
                         </div>
@@ -992,10 +998,20 @@ function diagnosePipeline(data) {
     // Step 1: Initial Vector Search
     const initialCount = data.stages.initial.length;
     if (initialCount === 0) {
+        const failures = vectorSearchFailures(data);
+        if (failures.length) {
+            return failures.map(entry => ({
+                label: 'Vector Search',
+                detail: `${entry.collectionId ? `Query failed for "${entry.collectionId}"` : entry.action || 'Vector search failed'}: ${entry.error}`,
+                fix: 'Resolve the reported search error, then retry. Use Copy Debug to include the full trace when reporting the issue.',
+                isCause: true,
+                isOk: false,
+            }));
+        }
         diagnosis.push({
             label: 'Vector Search',
             detail: `No matches returned from vector database for collection "${data.collectionId}".`,
-            fix: `Open Database Browser and check if "${data.collectionId}" exists and contains chunks. If empty, send some messages first to build the vector index.`,
+            fix: `Open Database Browser and check if "${data.collectionId}" contains chunks. If chunks are present, use Copy Debug to check the search trace and verify the embedding endpoint, source/model namespace and collection filters.`,
             isCause: true,
             isOk: false
         });
@@ -1611,6 +1627,37 @@ ${'='.repeat(50)}`;
 }
 
 /**
+ * Keep the report accessible when clipboard permissions or local HTTP prevent
+ * automatic copying. A visible, read-only textarea also supports iOS selection.
+ */
+function showDiagnosticText(dump) {
+    const body = document.querySelector('#vecthare_search_debug_modal .vecthare-search-debug-body');
+    if (!body) return;
+    let card = document.getElementById('vecthare_diagnostic_copy');
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'vecthare_diagnostic_copy';
+        card.className = 'vecthare-debug-card';
+        card.innerHTML = `
+            <div class="vecthare-debug-card-header">Copy diagnostic report</div>
+            <div class="vecthare-debug-card-body">
+                <p>Automatic copying is unavailable. Touch and hold the report below, then choose Copy.</p>
+                <textarea class="vecthare-debug-diagnostic-text" aria-label="Diagnostic report" readonly rows="12"></textarea>
+                <button type="button" class="vecthare-debug-expand-btn">Select report</button>
+            </div>`;
+        body.prepend(card);
+        card.querySelector('button').addEventListener('click', () => {
+            const field = card.querySelector('textarea');
+            field.focus({ preventScroll: true });
+            field.select();
+            field.setSelectionRange(0, field.value.length);
+        });
+    }
+    card.querySelector('textarea').value = dump;
+    card.scrollIntoView?.({ block: 'nearest' });
+}
+
+/**
  * Copies diagnostic dump to clipboard
  */
 async function copyDiagnosticDump() {
@@ -1619,13 +1666,13 @@ async function copyDiagnosticDump() {
         return;
     }
 
+    const dump = generateDiagnosticDump(lastDebugData);
     try {
-        const dump = generateDiagnosticDump(lastDebugData);
         await navigator.clipboard.writeText(dump);
+        document.getElementById('vecthare_diagnostic_copy')?.remove();
         toastr.success('Diagnostic dump copied to clipboard');
-    } catch (err) {
-        console.error('Failed to copy diagnostic:', err);
-        toastr.error('Failed to copy to clipboard');
+    } catch {
+        showDiagnosticText(dump);
     }
 }
 

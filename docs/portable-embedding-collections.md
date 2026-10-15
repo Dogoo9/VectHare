@@ -109,6 +109,12 @@ verify the import and its final count before activation. If the original collect
 has been deleted, restore from JSON rather than using the migration action, which
 needs a live source collection.
 
+For Qdrant, LanceDB and Milvus, leaving the llama.cpp endpoint unconfigured keeps
+the companion plugin's server-side default. A browser does not need its own
+llama.cpp text-generation connection to use that default. Explicit alternate
+endpoints still take precedence and cannot be blank. Qdrant's `localhost` host is
+resolved by the SillyTavern server, including when accessing it from a phone.
+
 ## Explicit BM25 fallback
 
 The dialog can read all stored chunk texts and build a complete BM25 index without

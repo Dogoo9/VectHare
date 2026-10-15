@@ -87,7 +87,7 @@ describe('authoritative keyword activation', () => {
 });
 
 describe('queryAndMergeCollections multi-query', () => {
-    beforeEach(() => queryMultipleCollections.mockReset());
+    beforeEach(() => { queryMultipleCollections.mockReset(); });
 
     it('queries and merges a repeated collection only once after an edit', async () => {
         queryMultipleCollections.mockResolvedValue({
@@ -156,12 +156,29 @@ describe('queryAndMergeCollections multi-query', () => {
             bad: { hashes: [], metadata: [], error: 'backend unavailable' },
         });
 
+        const debugData = { trace: [], chunkFates: {} };
         const results = await queryAndMergeCollections(
-            ['good', 'bad'], 'query', { top_k: 5 }, [], { trace: [], chunkFates: {} },
+            ['good', 'bad'], 'query', { top_k: 5 }, [], debugData,
         );
 
         expect(results).toHaveLength(1);
         expect(results[0]).toMatchObject({ hash: 7, text: 'kept', collectionId: 'good' });
+        expect(debugData.trace).toContainEqual(expect.objectContaining({
+            stage: 'vector_search', collectionId: 'bad', error: 'backend unavailable',
+        }));
+    });
+
+    it('retains a request-wide endpoint error in each collection search trace', async () => {
+        const message = 'Configure the llama.cpp embedding server URL in SillyTavern or VectHare alternate endpoint settings.';
+        queryMultipleCollections.mockRejectedValue(new Error(message));
+        const debugData = { trace: [], chunkFates: {} };
+        const results = await queryAndMergeCollections(
+            ['qdrant:llamacpp:imported'], 'query', { top_k: 5 }, [], debugData,
+        );
+        expect(results).toEqual([]);
+        expect(debugData.trace).toContainEqual(expect.objectContaining({
+            stage: 'vector_search', collectionId: 'qdrant:llamacpp:imported', error: message,
+        }));
     });
 
     it('falls back to chat text while retaining normalized metadata', async () => {
