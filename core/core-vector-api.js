@@ -814,7 +814,7 @@ async function queryCollectionResolved(collectionId, searchText, topK, settings)
         console.log('[VectHare] Hybrid search enabled, dispatching to hybrid search module');
         const queryStart = Date.now();
         try {
-            const result = await hybridSearch(collectionId, searchText, topK, settings, { queryVector });
+            const result = await hybridSearch(collectionId, searchText, topK, routed, { queryVector });
             const queryLatency = Date.now() - queryStart;
             recordQuery(settings?.vector_backend || 'standard', queryLatency);
             return result;
@@ -986,14 +986,14 @@ async function queryMultipleCollectionsResolved(collectionIds, searchText, topK,
         await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
             try {
                 const queryStart = Date.now();
-                processedResults[collectionId] = await hybridSearch(collectionId, searchText, topK, settings, { queryVector });
+                processedResults[collectionId] = await hybridSearch(collectionId, searchText, topK, routed, { queryVector });
                 const queryLatency = Date.now() - queryStart;
                 recordQuery(settings?.vector_backend || 'standard', queryLatency);
             } catch (error) {
                 console.warn(`[VectHare] Hybrid search failed for ${collectionId}:`, error.message);
                 // VEC-18: Record error
                 recordError(settings?.vector_backend || 'standard', error);
-                processedResults[collectionId] = { hashes: [], metadata: [] };
+                processedResults[collectionId] = { hashes: [], metadata: [], error: error.message };
             }
         }), concurrency);
         return attachTimings(processedResults, performance.now() - backendStart);

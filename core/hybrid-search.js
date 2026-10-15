@@ -112,6 +112,7 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     console.log(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
 
     let vectorResults = { hashes: [], metadata: [] };
+    let vectorError = null;
     try {
         vectorResults = await backend.queryCollection(
             collectionId,
@@ -123,6 +124,7 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
     } catch (error) {
         if (queryVector) throw error;
+        vectorError = error;
         console.error(`[HybridSearch] Vector query failed:`, error);
     }
 
@@ -151,6 +153,10 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
         }));
         bm25Results = performBM25Search(denseDocuments, searchText, { k1: settings.bm25_k1, b: settings.bm25_b });
     }
+
+    // A populated browser index can sustain lexical fallback. A fresh browser
+    // must see the inference error rather than an empty successful search.
+    if (vectorError && bm25Results.length === 0) throw vectorError;
 
     // 4. Fuse results
     let fusedResults;
