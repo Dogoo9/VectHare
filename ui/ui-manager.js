@@ -25,6 +25,7 @@ import { getChatCollectionId } from '../core/chat-vectorization.js';
 import { doesChatHaveVectors } from '../core/collection-loader.js';
 import { getModelField } from '../core/providers.js';
 import { getChunkingStrategies } from '../core/content-types.js';
+import { getAlternativeEndpointHtml, bindAlternativeEndpointControls } from './endpoint-presets.js';
 
 /**
  * Applies the current settings snapshot without overwriting collection metadata
@@ -208,14 +209,7 @@ export function renderSettings(containerId, settings, callbacks) {
                             </div>
 
                             <!-- Alternative Endpoint (for local providers) -->
-                            <div class="vecthare_provider_setting" data-provider="ollama,vllm,llamacpp,koboldcpp,bananabread">
-                                <label class="checkbox_label">
-                                    <input type="checkbox" id="vecthare_use_alt_endpoint" />
-                                    <span>Use Alternative Endpoint</span>
-                                </label>
-                                <input type="text" id="vecthare_alt_endpoint_url" class="vecthare-input" placeholder="http://localhost:11434" />
-                                <small class="vecthare_hint">Override default API URL for this provider</small>
-                            </div>
+                            ${getAlternativeEndpointHtml()}
 
                             <!-- BananaBread Info & Reranking -->
                             <div class="vecthare_provider_setting" data-provider="bananabread">
@@ -2472,23 +2466,10 @@ function bindSettingsEvents(settings, callbacks) {
         });
 
     // Alternative endpoint
-    $('#vecthare_use_alt_endpoint')
-        .prop('checked', settings.use_alt_endpoint)
-        .on('input', function() {
-            settings.use_alt_endpoint = $(this).prop('checked');
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-            $('#vecthare_alt_endpoint_url').toggle(settings.use_alt_endpoint);
-        });
-
-    $('#vecthare_alt_endpoint_url')
-        .val(settings.alt_endpoint_url)
-        .toggle(settings.use_alt_endpoint)
-        .on('input', function() {
-            settings.alt_endpoint_url = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
+    bindAlternativeEndpointControls(document.getElementById('vecthare_settings'), settings, () => {
+        applySettingsSnapshot(settings);
+        saveSettingsDebounced();
+    });
 
     // WebLLM model
     $('#vecthare_webllm_model')

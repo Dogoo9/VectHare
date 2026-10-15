@@ -115,6 +115,12 @@ llama.cpp text-generation connection to use that default. Explicit alternate
 endpoints still take precedence and cannot be blank. Qdrant's `localhost` host is
 resolved by the SillyTavern server, including when accessing it from a phone.
 
+Alternative Endpoint includes a saved-address dropdown. Enter the full HTTP(S)
+URL and port, optionally add a name, and choose Save. Selecting a saved address
+fills the endpoint and enables the override. These shortcuts persist with
+VectHare settings; reload another open session to load the saved list. Delete
+removes a shortcut while retaining the currently configured connection.
+
 Hybrid search forwards the configured embedding endpoint to both native hybrid
 queries and vector queries used for client-side fusion. A populated browser-local
 keyword index can mask an embedding connection failure by supplying lexical
