@@ -720,6 +720,22 @@
     color: white;
 }
 
+.vecthare-debug-diagnostic-text {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-height: 12rem;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 30%, transparent);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    font-family: monospace;
+    font-size: 16px;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
 .vecthare-debug-toggle-btn {
     margin-left: auto;
     background: transparent;

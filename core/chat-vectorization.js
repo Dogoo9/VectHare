@@ -755,6 +755,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
 
             // TRACE: Vector query results for this collection
             addTrace(debugData, 'vector_search', `Query completed for ${collectionId}`, {
+                collectionId,
                 hashesReturned: queryResults.hashes.length,
                 hashes: queryResults.hashes.slice(0, 5),
                 scoreBreakdown: queryResults.metadata.slice(0, 5).map(m => ({
@@ -846,6 +847,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         } catch (error) {
             console.warn(`VectHare: Failed to query collection ${collectionId}:`, error.message);
             addTrace(debugData, 'vector_search', `Query failed for ${collectionId}`, {
+                collectionId,
                 error: error.message
             });
         }

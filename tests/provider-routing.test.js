@@ -6,10 +6,15 @@ const mocks = vi.hoisted(() => ({ backend: {
     queryMultipleCollections: vi.fn(async ids => Object.fromEntries(ids.map(id => [id, { hashes: [7], metadata: [{ hash: 7, text: 'key', score: 0.9 }] }]))),
 }, embedLocal: vi.fn(async (texts) => ({ vectors: texts.map(() => [0.5, 1]), model: 'nomic' })) }));
 vi.mock('../../../shared.js', () => ({ isWebLlmSupported: () => true }));
+vi.mock('../../../../textgen-settings.js', () => ({
+    textgen_types: { LLAMACPP: 'llamacpp' },
+    textgenerationwebui_settings: { server_urls: {} },
+}));
 vi.mock('../providers/local-embeddings.js', () => ({ embedLocal: mocks.embedLocal }));
 vi.mock('../backends/backend-manager.js', () => ({ getBackend: async () => mocks.backend,
     invalidateBackendHealth: vi.fn(), recordQuery: vi.fn(), recordInsert: vi.fn(), recordDelete: vi.fn(), recordError: vi.fn() }));
 import { extension_settings } from '../../../../extensions.js';
+import { textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { setCollectionMeta } from '../core/collection-metadata.js';
 import { getVectorsRequestBody, getSavedHashes, insertVectorItems, deleteVectorItems, updateChunkMetadata, updateChunkText, queryCollection, queryMultipleCollections, purgeVectorIndex } from '../core/core-vector-api.js';
 import { indexLexicalItems, purgeAllLexicalIndexes } from '../core/lexical-index.js';
@@ -22,6 +27,7 @@ const globalSettings = { source: 'openai', vector_backend: 'qdrant' };
 beforeEach(() => {
     vi.clearAllMocks(); purgeAllLexicalIndexes();
     extension_settings.vecthare = { collections: {} };
+    textgenerationwebui_settings.server_urls = {};
     setCollectionMeta(key, { storageLocator: locator, embeddingConnection: profile(), embedding: { fingerprint: fingerprint(), probes, compatibility: 'compatible' } });
     mocks.embedLocal.mockImplementation(async texts => ({ vectors: texts.map(() => [0.5, 1]), model: 'nomic' }));
 });
@@ -97,6 +103,46 @@ it('server-generated inserts and queries carry the selected alternate llama.cpp 
 it('missing llama.cpp URL fails before any insert or query', async () => {
     await expect(insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], { source: 'llamacpp' })).rejects.toThrow('Configure');
     expect(mocks.backend.insertVectorItems).not.toHaveBeenCalled();
+});
+
+it.each(['qdrant', 'lancedb', 'milvus'])('preserves the %s server default without a browser llama.cpp connection', async vector_backend => {
+    const settings = { source: 'llamacpp', vector_backend };
+    await insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], settings);
+    await queryCollection('new', 'synthetic', 5, settings);
+    await queryMultipleCollections(['new'], 'synthetic', 5, 0, settings);
+    const routedSettings = [
+        mocks.backend.insertVectorItems.mock.calls[0][2],
+        mocks.backend.queryCollection.mock.calls[0][3],
+        mocks.backend.queryMultipleCollections.mock.calls[0][4],
+    ];
+    for (const routed of routedSettings) {
+        expect(routed).toMatchObject({ source: 'llamacpp', vector_backend });
+        expect(JSON.parse(JSON.stringify(routed.inference_request_args))).not.toHaveProperty('apiUrl');
+    }
+    expect(mocks.embedLocal).not.toHaveBeenCalled();
+});
+
+it('forwards the configured default llama.cpp URL when it is available', async () => {
+    textgenerationwebui_settings.server_urls.llamacpp = 'http://localhost:5001';
+    await queryMultipleCollections(['new'], 'synthetic', 5, 0, { source: 'llamacpp', vector_backend: 'qdrant' });
+    expect(mocks.backend.queryMultipleCollections.mock.calls[0][4].inference_request_args).toMatchObject({ apiUrl: 'http://localhost:5001' });
+});
+
+it('uses the collection storage backend when deciding whether server defaults are supported', async () => {
+    const settings = { source: 'llamacpp', vector_backend: 'standard',
+        collection_locator: { backend: 'qdrant', source: 'llamacpp', collectionId: 'new' } };
+    await queryCollection('new', 'synthetic', 5, settings);
+    expect(mocks.backend.queryCollection.mock.calls[0][3].vector_backend).toBe('qdrant');
+});
+
+it('rejects an empty explicit llama.cpp endpoint instead of using the server default', async () => {
+    const settings = { source: 'llamacpp', vector_backend: 'qdrant', use_alt_endpoint: true, alt_endpoint_url: '' };
+    await expect(insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], settings)).rejects.toThrow('Configure');
+    await expect(queryCollection('new', 'synthetic', 5, settings)).rejects.toThrow('Configure');
+    await expect(queryMultipleCollections(['new'], 'synthetic', 5, 0, settings)).rejects.toThrow('Configure');
+    expect(mocks.backend.insertVectorItems).not.toHaveBeenCalled();
+    expect(mocks.backend.queryCollection).not.toHaveBeenCalled();
+    expect(mocks.backend.queryMultipleCollections).not.toHaveBeenCalled();
 });
 
 it('client profiles use their own endpoint without requiring a global llama.cpp URL', async () => {

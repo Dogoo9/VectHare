@@ -231,10 +231,18 @@ export function getVectorsRequestBody(args = {}, settings) {
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
             body.keep = !!settings.ollama_keep;
             break;
-        case 'llamacpp':
+        case 'llamacpp': {
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls?.[textgen_types.LLAMACPP];
-            if (!body.apiUrl) throw new Error('Configure the llama.cpp embedding server URL in SillyTavern or VectHare alternate endpoint settings.');
+            // Companion backends resolve an omitted URL on the server. Requiring
+            // the browser's text-generation URL here breaks their default endpoint
+            // on clients where that connection has never been configured.
+            const backend = storageSettings(settings).vector_backend;
+            const usesServerDefault = ['qdrant', 'lancedb', 'milvus'].includes(backend);
+            if (!body.apiUrl && (settings.use_alt_endpoint || !usesServerDefault)) {
+                throw new Error('Configure the llama.cpp embedding server URL in SillyTavern or VectHare alternate endpoint settings.');
+            }
             break;
+        }
         case 'vllm':
             body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
             body.model = settings.vllm_model;
