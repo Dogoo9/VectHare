@@ -29,6 +29,7 @@ import { saveSettingsDebounced } from '../../../../../script.js';
 import { getChatUUID } from '../core/chat-vectorization.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../popup.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
+import { checkWikiPlugin, scrapeWikiPages } from '../core/wiki-import.js';
 
 // ============================================================================
 // STATE
@@ -37,6 +38,9 @@ import { openTextCleaningManager } from './text-cleaning-manager.js';
 let currentContentType = 'lorebook';
 let currentSettings = {};
 let sourceData = null;
+let wikiRevision = 0;
+let wikiProbeRevision = 0;
+let wikiPluginReady = false;
 
 // ============================================================================
 // MODAL CREATION
@@ -47,6 +51,8 @@ let sourceData = null;
  * @param {string} initialType - Optional initial content type to select
  */
 export function openContentVectorizer(initialType = null) {
+    wikiRevision++;
+    wikiProbeRevision++;
     currentContentType = initialType;
     currentSettings = initialType ? { ...getContentTypeDefaults(initialType) } : {};
     sourceData = null;
@@ -74,6 +80,8 @@ export function openContentVectorizer(initialType = null) {
  * Closes the modal
  */
 export function closeContentVectorizer() {
+    wikiRevision++;
+    wikiProbeRevision++;
     $('#vecthare_content_vectorizer_modal').fadeOut(200, function() {
         $(this).remove();
     });
@@ -593,7 +601,7 @@ function renderWikiSource(type) {
                        class="vecthare-input"
                        placeholder="${options.filterPlaceholder}">
                 <div class="vecthare-cv-hint">
-                    Leave empty to scrape single page, or enter comma-separated page names for bulk scrape
+                    An article URL selects that page. Enter comma-separated page names to select multiple pages. A wiki root with no filter scrapes all pages.
                 </div>
             </div>
 
@@ -1087,6 +1095,9 @@ function bindEvents() {
 
     // Content type dropdown selection
     $('#vecthare_cv_type_select').on('change', function() {
+        wikiRevision++;
+        wikiProbeRevision++;
+        sourceData = null;
         const type = $(this).val();
 
         if (!type) {
@@ -1343,6 +1354,13 @@ function bindSourceEvents(type) {
 
     // Wiki scraping
     $('#vecthare_cv_scrape_wiki').on('click', scrapeWiki);
+    $('#vecthare_cv_wiki_url, #vecthare_cv_wiki_filter, #vecthare_cv_wiki_type').on('input change', function() {
+        wikiRevision++;
+        sourceData = null;
+        $('#vecthare_cv_wiki_preview').hide();
+        $('#vecthare_cv_wiki_status').text('');
+        $('#vecthare_cv_scrape_wiki').prop('disabled', !wikiPluginReady);
+    });
     $('#vecthare_cv_wiki_type').on('change', function() {
         const wikiType = $(this).val();
         const type = getContentType('wiki');
@@ -1814,9 +1832,14 @@ async function checkWikiPluginStatus() {
 
     statusEl.html('<i class="fa-solid fa-spinner fa-spin"></i> Checking plugin...');
 
-    const isAvailable = await isWikiPluginAvailable(wikiType);
+    const revision = ++wikiProbeRevision;
+    wikiPluginReady = false;
+    scrapeBtn.prop('disabled', true);
+    const result = await checkWikiPlugin(wikiType);
+    if (revision !== wikiProbeRevision || currentContentType !== 'wiki') return;
+    wikiPluginReady = result.available;
 
-    if (isAvailable) {
+    if (result.available) {
         statusEl.html(`
             <i class="fa-solid fa-check-circle" style="color: var(--vecthare-success);"></i>
             <span>${wikiType === 'fandom' ? 'Fandom' : 'MediaWiki'} scraper ready</span>
@@ -1827,34 +1850,14 @@ async function checkWikiPluginStatus() {
         statusEl.html(`
             <div class="vecthare-cv-wiki-plugin-warning">
                 <i class="fa-solid fa-exclamation-triangle" style="color: var(--vecthare-warning);"></i>
-                <span>Wiki scraping requires the Fandom Scraper plugin</span>
+                <span class="vecthare-cv-wiki-plugin-error"></span>
                 <a href="${type.sourceOptions.pluginUrl}" target="_blank" rel="noopener" class="vecthare-cv-plugin-link">
                     <i class="fa-solid fa-external-link"></i> Install Plugin
                 </a>
             </div>
         `);
+        statusEl.find('.vecthare-cv-wiki-plugin-error').text(result.message);
         scrapeBtn.prop('disabled', true);
-    }
-}
-
-/**
- * Checks if the wiki plugin is available via probe endpoint
- */
-async function isWikiPluginAvailable(wikiType) {
-    try {
-        const endpoint = wikiType === 'fandom'
-            ? '/api/plugins/fandom/probe'
-            : '/api/plugins/fandom/probe-mediawiki';
-
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-        });
-
-        return response.ok;
-    } catch (error) {
-        console.debug('VectHare: Wiki plugin probe failed:', error);
-        return false;
     }
 }
 
@@ -1875,41 +1878,15 @@ async function scrapeWiki() {
     const preview = $('#vecthare_cv_wiki_preview');
     const scrapeBtn = $('#vecthare_cv_scrape_wiki');
 
+    const revision = ++wikiRevision;
+    sourceData = null;
     status.html('<i class="fa-solid fa-spinner fa-spin"></i> Scraping wiki...');
     preview.hide();
     scrapeBtn.prop('disabled', true);
 
     try {
-        const endpoint = wikiType === 'fandom'
-            ? '/api/plugins/fandom/scrape'
-            : '/api/plugins/fandom/scrape-mediawiki';
-
-        // Build request body based on wiki type
-        let requestBody;
-        if (wikiType === 'fandom') {
-            // Extract fandom ID from URL
-            const fandomId = extractFandomId(url);
-            requestBody = { fandom: fandomId, filter: filter };
-        } else {
-            requestBody = { url: url, filter: filter };
-        }
-
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(error || `HTTP ${response.status}`);
-        }
-
-        const pages = await response.json();
-
-        if (!pages || pages.length === 0) {
-            throw new Error('No content found');
-        }
+        const pages = await scrapeWikiPages(wikiType, url, filter);
+        if (revision !== wikiRevision || currentContentType !== 'wiki') return;
 
         // Combine pages into content
         const combinedContent = pages.map(page =>
@@ -1938,10 +1915,12 @@ async function scrapeWiki() {
         toastr.success(`Scraped ${pages.length} page(s), ${combinedContent.length.toLocaleString()} chars`, 'VectHare');
 
     } catch (e) {
+        if (revision !== wikiRevision || currentContentType !== 'wiki') return;
         console.error('VectHare: Wiki scrape failed:', e);
-        status.html(`<i class="fa-solid fa-times" style="color: var(--vecthare-danger);"></i> ${e.message}`);
-        scrapeBtn.prop('disabled', false);
+        status.text(e.message);
         toastr.error('Failed to scrape wiki: ' + e.message);
+    } finally {
+        if (revision === wikiRevision && currentContentType === 'wiki') scrapeBtn.prop('disabled', !wikiPluginReady);
     }
 }
 

@@ -1,4 +1,5 @@
 import { openEmbeddingMigrationDialog } from './embedding-migration-dialog.js';
+import { duplicateCollectionToQdrant } from '../core/collection-duplicate.js';
 /**
  * ============================================================================
  * VECTHARE DATABASE BROWSER
@@ -911,6 +912,8 @@ function renderCollectionCard(collection) {
                     : ""
                 }
                 <button class="vecthare-btn-sm vecthare-action-embedding" data-collection-key="${uniqueKey}">Embedding Provider / Migrate</button>
+                <button class="vecthare-btn-sm vecthare-action-duplicate" data-collection-key="${uniqueKey}"
+                        title="Copy stored vectors and metadata into a new Qdrant collection">Duplicate to Qdrant</button>
                 <button class="vecthare-btn-sm vecthare-action-open-folder"
                         data-collection-key="${uniqueKey}"
                         data-backend="${collection.backend}"
@@ -1402,6 +1405,32 @@ function bindCollectionCardEvents() {
     e.stopPropagation();
     const collection = findCollectionByKey($(this).data("collection-key"));
     if (collection) openEmbeddingMigrationDialog(collection, browserState.settings, refreshCollections);
+  });
+
+  $(".vecthare-action-duplicate").off("click").on("click", async function (e) {
+    e.stopPropagation();
+    const collection = findCollectionByKey($(this).data("collection-key"));
+    if (!collection) return;
+    const name = prompt('Name the new Qdrant collection (1–160 letters, numbers, underscores or hyphens):',
+      `${collection.name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 150)}_copy`);
+    if (name === null) return;
+    const button = $(this);
+    button.prop('disabled', true);
+    try {
+      const sourceKey = collection.registryKey || `${collection.backend}:${collection.source || 'transformers'}:${collection.id}`;
+      const result = await duplicateCollectionToQdrant(sourceKey, name, {
+        ...browserState.settings,
+        collection_locator: getCollectionMeta(sourceKey).storageLocator || {
+          backend: collection.backend, source: collection.source || 'transformers', model: collection.model ?? '', collectionId: collection.id,
+        },
+      }, { onProgress: message => button.text(message) });
+      toastr.success(`Copied ${result.chunkCount} chunks to "${result.collectionId}". Enable the duplicate when ready.`, 'VectHare');
+    } catch (error) {
+      toastr.error(`Duplication failed: ${error.message}`, 'VectHare');
+    } finally {
+      button.prop('disabled', false).text('Duplicate to Qdrant');
+      await refreshCollections();
+    }
   });
 
   // Switch model (for collections with multiple embedding models)
