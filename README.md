@@ -72,6 +72,9 @@ VectHare is an **advanced Retrieval-Augmented Generation (RAG) system** for Sill
 - View chunk counts and metadata
 - Enable/disable collections on the fly
 - Export and import collections for backup/sharing
+- Duplicate collections to Qdrant with a name you choose, preserving stored vectors and metadata without re-embedding. Use **Duplicate to Qdrant** on a collection card; names accept 1–160 letters, numbers, underscores or hyphens. Qdrant multitenancy must be off. Verified copies start paused so you can enable them when ready; incomplete copies remain paused for review or deletion.
+
+Wiki imports use the [SillyTavern Fandom Scraper server plugin](https://github.com/SillyTavern/SillyTavern-Fandom-Scraper). Install it in SillyTavern's `plugins` directory, enable `enableServerPlugins` in `config.yaml`, and restart SillyTavern. A Fandom or MediaWiki article URL selects that article; comma-separated page names select several pages. A wiki root URL with an empty filter requests all pages. Authentication and plugin errors appear in the importer; a 403 requires refreshing your SillyTavern session.
 
 ### 🔎 Chunk Visualizer
 - View all chunks in a collection
