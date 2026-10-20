@@ -9,7 +9,7 @@ import { QdrantBackend } from '../backends/qdrant.js';
 import { StandardBackend } from '../backends/standard.js';
 import { getBackend } from '../backends/backend-manager.js';
 import { duplicateCollectionToQdrant } from '../core/collection-duplicate.js';
-import { getCollectionMeta, setCollectionMeta, setCollectionEnabled } from '../core/collection-metadata.js';
+import { getCollectionMeta, setCollectionMeta, setCollectionEnabled, getChunkMetadata, saveChunkMetadata, deleteChunkMetadata } from '../core/collection-metadata.js';
 import { collectionMutation } from '../core/collection-runtime.js';
 
 const key = 'qdrant:koboldcpp:old';
@@ -42,6 +42,10 @@ beforeEach(() => {
             collections.set(body.collectionId, [...collections.get(body.collectionId) || [], ...batch]);
             return json({ success: true });
         }
+        if (url.endsWith('/chunks/delete')) {
+            collections.set(body.collectionId, collections.get(body.collectionId).filter(item => !body.hashes.includes(item.hash)));
+            return json({ success: true });
+        }
         throw new Error(`Unexpected request ${url}`);
     }));
 });
@@ -59,6 +63,41 @@ it('copies every page of vectors and metadata to the exact user name without cal
     expect(requests.filter(r => r.url.endsWith('/chunks/insert'))).toHaveLength(6);
     setCollectionEnabled(result.registryKey, true);
     expect(getCollectionMeta(result.registryKey).enabled).toBe(true);
+});
+
+it('snapshots chunk overrides and keeps duplicate edits, deletion and activation independent after reload', async () => {
+    saveChunkMetadata(0, { enabled: false, disabled: true, links: [{ target: '1', type: 'hard' }], summaries: ['summary'] });
+    saveChunkMetadata(1, { keywords: [{ text: 'source', weight: 2 }], parentHash: 0 }, key);
+    const sourceMeta = structuredClone(getCollectionMeta(key));
+    const sourceChunk = getChunkMetadata(0, key);
+    const result = await duplicateCollectionToQdrant(key, 'copy', {});
+    const copy = result.registryKey;
+    expect(getChunkMetadata(0, copy)).toEqual(sourceChunk);
+    expect(getChunkMetadata(1, copy)).toEqual(getChunkMetadata(1, key));
+    expect(getCollectionMeta(copy).chunkMetadata).toHaveProperty('2', null);
+
+    // Edits in either direction must not affect the other collection.
+    saveChunkMetadata(0, { ...getChunkMetadata(0, copy), enabled: true, disabled: false }, copy);
+    const edited = getChunkMetadata(1, key);
+    edited.keywords[0].text = 'changed source';
+    saveChunkMetadata(1, edited, key);
+    expect(getChunkMetadata(1, copy).keywords[0].text).toBe('source');
+    deleteChunkMetadata(0, copy);
+    // Even a legacy write cannot alter a chunk with no overrides at copy time.
+    saveChunkMetadata(2, { enabled: false });
+    expect(getChunkMetadata(2, copy)).toBeNull();
+    setCollectionEnabled(copy, true);
+    setCollectionEnabled(key, false);
+
+    extension_settings.vecthare = JSON.parse(JSON.stringify(extension_settings.vecthare));
+    expect(getChunkMetadata(0, key)).toEqual(sourceChunk);
+    expect(getChunkMetadata(0, copy)).toBeNull();
+    expect(getCollectionMeta(copy).enabled).toBe(true);
+    expect(getCollectionMeta(key)).toMatchObject({ ...sourceMeta, enabled: false, chunkMetadata: expect.any(Object) });
+    await state.backend.deleteVectorItems('copy', [0], { source: locator.source, model: locator.model });
+    expect(collections.get('old')).toEqual(original);
+    expect(collections.get('copy')).toHaveLength(original.length - 1);
+    expect(collections.get('copy').some(item => item.hash === 0)).toBe(false);
 });
 
 it.each(['', 'old', '../bad', 'bad:name'])('rejects an invalid or source name %j before writing', async name => {

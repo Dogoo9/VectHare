@@ -8,6 +8,7 @@ vi.mock('../core/../../../../../script.js', () => ({
     getCurrentChatId: vi.fn(() => 'chat-1'), is_send_press: false, setExtensionPrompt: vi.fn(),
     substituteParams: value => value, chat_metadata: {}, extension_prompts: {},
     getRequestHeaders: vi.fn(() => ({})),
+    saveSettingsDebounced: vi.fn(),
 }));
 vi.mock('../core/../../../../extensions.js', () => ({
     extension_settings: {
@@ -34,6 +35,9 @@ vi.mock('../core/core-vector-api.js', () => ({
 }));
 
 import { extension_settings } from '../core/../../../../extensions.js';
+import { saveChunkMetadata, setCollectionMeta } from '../core/collection-metadata.js';
+import { filterDisabledChunks } from '../core/scenes.js';
+import { applyDecayToResults } from '../core/temporal-decay.js';
 import {
     filterManuallyDisabledChunks,
     promoteKeywordMatches,
@@ -42,6 +46,25 @@ import {
 } from '../core/chat-vectorization.js';
 
 describe('per-entry retrieval state', () => {
+    it('retrieves matching hashes using their own enablement, keywords, scenes and decay settings', () => {
+        const source = 'qdrant:koboldcpp:original';
+        const copy = 'qdrant:koboldcpp:duplicate';
+        setCollectionMeta(source, {});
+        setCollectionMeta(copy, {});
+        saveChunkMetadata(42, { enabled: false, disabled: true, disabledByScene: 99, keywords: ['source'] }, source);
+        saveChunkMetadata(42, { enabled: true, disabled: false, temporallyBlind: true, keywords: ['copy'] }, copy);
+        const chunks = [source, copy].map(collectionId => ({ hash: 42, collectionId, score: 0.5,
+            metadata: { source: 'chat', messageId: 0, enabled: false, disabled: true } }));
+        expect(filterManuallyDisabledChunks(chunks).map(c => c.collectionId)).toEqual([copy]);
+        expect(filterDisabledChunks(chunks).map(c => c.collectionId)).toEqual([copy]);
+        expect(promoteKeywordMatches(chunks, 'copy')).toBe(1);
+        expect(chunks[0].keywordMatched).toBeUndefined();
+        expect(chunks[1].keywordMatched).toBe(true);
+        const decayed = applyDecayToResults(chunks, 20, { enabled: true, mode: 'exponential', halfLife: 10, floor: 0 });
+        expect(decayed[0].temporallyBlind).not.toBe(true);
+        expect(decayed[1].temporallyBlind).toBe(true);
+    });
+
     it('keeps only entries enabled in the visualizer or backend metadata', () => {
         const vecthare = extension_settings.vecthare;
         vecthare.vecthare_chunk_meta_2 = { enabled: false };

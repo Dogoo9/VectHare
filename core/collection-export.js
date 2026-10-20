@@ -130,7 +130,7 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
             };
 
             // Get per-chunk metadata from VectHare settings
-            const chunkMeta = getChunkMetadata(chunk.hash);
+            const chunkMeta = getChunkMetadata(chunk.hash, exportKey);
             if (chunkMeta) {
                 chunk.chunkMeta = chunkMeta;
             }
@@ -596,7 +596,7 @@ export async function importCollection(exportData, settings, options = {}) {
         for (const chunk of validChunks) {
             if (chunk.chunkMeta) {
                 const newHash = chunk.hash ?? getStringHash(chunk.text);
-                saveChunkMetadata(newHash, chunk.chunkMeta);
+                saveChunkMetadata(newHash, chunk.chunkMeta, targetKey);
             }
         }
 

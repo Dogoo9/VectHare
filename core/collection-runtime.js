@@ -49,6 +49,15 @@ export function physicalCollectionId(id, settings) {
     return settings.collection_locator?.collectionId || settings.storageLocator?.collectionId || parseRegistryKey(id).collectionId || id;
 }
 
+/** Use the selected physical namespace for local metadata as well as storage. */
+export function collectionMetadataKey(id, settings = {}) {
+    const locator = settings.collection_locator || settings.storageLocator;
+    if (!id && !locator?.collectionId) return null;
+    if (!locator) return storedCollectionKey(id) || id;
+    const backend = locator.backend === 'vectra' ? 'standard' : locator.backend;
+    return `${backend}:${locator.source}:${locator.collectionId}`;
+}
+
 export function embeddingProfileKey(settings) {
     const routed = storageSettings(settings);
     return JSON.stringify([routed.vector_backend || 'standard', routed.source, routed.model ?? '',
