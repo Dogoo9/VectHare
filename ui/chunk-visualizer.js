@@ -26,6 +26,7 @@ import {
     updateChunkText,
     updateChunkMetadata,
 } from '../core/core-vector-api.js';
+import { collectionMetadataKey } from '../core/collection-runtime.js';
 import { getStringHash } from '../../../../utils.js';
 import {
     filterSceneChunks,
@@ -48,6 +49,7 @@ import { eventSource } from '../../../../../script.js';
 
 let currentResults = null;
 let currentCollectionId = null;
+let currentMetadataKey = null;
 let currentSettings = null;
 let allChunks = [];
 let filteredChunks = [];
@@ -115,7 +117,7 @@ function normalizeKeywords(keywords) {
 }
 
 function getChunkData(chunk) {
-    const stored = getChunkMetadata(chunk.hash) || {};
+    const stored = { ...chunk.metadata, ...getChunkMetadata(chunk.hash, currentMetadataKey) };
 
     // User overrides take priority, then fall back to DB-stored keywords
     const dbKeywords = chunk.metadata?.keywords || chunk.keywords || [];
@@ -128,7 +130,7 @@ function getChunkData(chunk) {
         score: chunk.score || 1,
         similarity: chunk.similarity || 1,
         messageAge: chunk.messageAge,
-        enabled: stored.enabled !== false,
+        enabled: stored.enabled !== false && stored.disabled !== true,
         keywords: normalizeKeywords(keywords),
         conditions: stored.conditions || { enabled: false, logic: 'AND', rules: [] },
         chunkLinks: stored.chunkLinks || [],
@@ -152,7 +154,7 @@ function updateChunkData(hash, updates) {
         allChunks.forEach(chunk => {
             if (chunk.hash === hash) {
                 // merge pending changes into the chunk for fresh data if chunks end up with same hash somehow.
-                const stored = getChunkMetadata(hash) || {};
+                const stored = getChunkMetadata(hash, currentMetadataKey) || {};
                 const pending = pendingChanges.get(hash) || {};
                 chunk.data = { ...chunk.data, ...pending };
             }
@@ -204,8 +206,8 @@ async function saveAllChanges() {
             delete toSave._newSummaries;
             delete toSave._deletedSummaries;
             delete toSave.text; // Don't save text to metadata here
-            const existing = getChunkMetadata(hash) || {};
-            saveChunkMetadata(hash, { ...existing, ...toSave });
+            const existing = getChunkMetadata(hash, currentMetadataKey) || {};
+            saveChunkMetadata(hash, { ...existing, ...toSave }, currentMetadataKey);
 
             // Only call updateChunkMetadata if there are non-metadata changes
             // (metadata-only updates should skip the API call)
@@ -256,6 +258,7 @@ export function openVisualizer(results, collectionId, settings) {
     currentResults = results;
     currentCollectionId = collectionId;
     currentSettings = settings;
+    currentMetadataKey = collectionMetadataKey(collectionId, settings);
     selectedChunkId = null;
     displayLimit = 50;
     searchQuery = '';
@@ -293,6 +296,7 @@ export function closeVisualizer() {
     $('#vecthare_visualizer_modal').fadeOut(200);
     currentResults = null;
     currentCollectionId = null;
+    currentMetadataKey = null;
     selectedChunkId = null;
 }
 
@@ -614,7 +618,7 @@ function renderSceneDetailPanel() {
     }
 
     // Read fresh metadata from persistent storage, not from scene object
-    const stored = getChunkMetadata(scene.hash) || {};
+    const stored = getChunkMetadata(scene.hash, currentMetadataKey) || {};
     const meta = { ...scene.metadata, ...stored } || {};
     const start = meta.sceneStart ?? 0;
     const end = meta.sceneEnd ?? start;
@@ -740,7 +744,7 @@ function bindSceneDetailEvents() {
     $('#vecthare_scene_title').off('blur').on('blur', async function() {
         const title = $(this).val().trim();
         try {
-            await updateSceneChunkMetadata(scene.hash, { title }, currentSettings);
+            await updateSceneChunkMetadata(scene.hash, { title }, currentSettings, currentMetadataKey);
             // Update local chunk data
             if (scene.metadata) scene.metadata.title = title;
             renderSceneList();
@@ -755,7 +759,7 @@ function bindSceneDetailEvents() {
     $('#vecthare_scene_summary').off('blur').on('blur', async function() {
         const summary = $(this).val().trim();
         try {
-            await updateSceneChunkMetadata(scene.hash, { summary }, currentSettings);
+            await updateSceneChunkMetadata(scene.hash, { summary }, currentSettings, currentMetadataKey);
             if (scene.metadata) scene.metadata.summary = summary;
             toastr.success('Summary saved', 'VectHare');
         } catch (error) {
@@ -769,7 +773,7 @@ function bindSceneDetailEvents() {
         const keywordsStr = $(this).val().trim();
         const keywords = keywordsStr ? keywordsStr.split(',').map(k => k.trim()).filter(Boolean) : [];
         try {
-            await updateSceneChunkMetadata(scene.hash, { keywords }, currentSettings);
+            await updateSceneChunkMetadata(scene.hash, { keywords }, currentSettings, currentMetadataKey);
             // Update local metadata to reflect saved changes
             if (scene.metadata) {
                 scene.metadata.keywords = keywords;
@@ -812,7 +816,7 @@ function bindSceneDetailEvents() {
 
         if (!confirm(warningText)) return;
 
-        const result = await deleteSceneChunk(scene.hash, containedHashes, currentSettings);
+        const result = await deleteSceneChunk(scene.hash, containedHashes, currentSettings, currentMetadataKey);
         if (result.success) {
             // Remove from local allChunks array
             const idx = allChunks.findIndex(c => c.hash === scene.hash);
@@ -840,7 +844,7 @@ let selectedGroupId = null;
  */
 function getGroups() {
     if (!currentCollectionId) return [];
-    const meta = getCollectionMeta(currentCollectionId);
+    const meta = getCollectionMeta(currentMetadataKey);
     return meta.groups || [];
 }
 
@@ -850,7 +854,7 @@ function getGroups() {
  */
 function saveGroups(groups) {
     if (!currentCollectionId) return;
-    setCollectionMeta(currentCollectionId, { groups });
+    setCollectionMeta(currentMetadataKey, { groups });
 }
 
 /**
@@ -1772,10 +1776,10 @@ function bindDetailEvents() {
             }], currentSettings);
 
             // Update metadata (use string keys for metadata storage)
-            const oldMeta = getChunkMetadata(String(chunk.hash));
+            const oldMeta = getChunkMetadata(String(chunk.hash), currentMetadataKey);
             if (oldMeta) {
-                deleteChunkMetadata(String(chunk.hash));
-                saveChunkMetadata(String(newHash), { ...oldMeta });
+                deleteChunkMetadata(String(chunk.hash), currentMetadataKey);
+                saveChunkMetadata(String(newHash), { ...oldMeta }, currentMetadataKey);
             }
 
             // Update local state
@@ -1797,8 +1801,8 @@ function bindDetailEvents() {
     // Enabled toggle - save immediately (no pending changes, direct write)
     $('#vecthare_detail_enabled').on('change', function() {
         const enabled = $(this).is(':checked');
-        const existing = getChunkMetadata(chunk.hash) || {};
-        saveChunkMetadata(chunk.hash, { ...existing, disabled: !enabled, enabled });
+        const existing = getChunkMetadata(chunk.hash, currentMetadataKey) || {};
+        saveChunkMetadata(chunk.hash, { ...existing, disabled: !enabled, enabled }, currentMetadataKey);
         chunk.data.enabled = enabled;
         renderChunkList();
     });
@@ -1806,7 +1810,7 @@ function bindDetailEvents() {
     // Blind toggle
     $('#vecthare_detail_blind').on('change', function() {
         const blind = $(this).is(':checked');
-        setChunkTemporallyBlind(chunk.hash, blind);
+        setChunkTemporallyBlind(chunk.hash, blind, currentMetadataKey);
         chunk.data.temporallyBlind = blind;
         renderChunkList();
     });
@@ -2032,10 +2036,10 @@ function openTextEditor(chunk) {
             }], currentSettings);
 
             // Update metadata (use string keys for metadata storage)
-            const oldMeta = getChunkMetadata(String(chunk.hash));
+            const oldMeta = getChunkMetadata(String(chunk.hash), currentMetadataKey);
             if (oldMeta) {
-                deleteChunkMetadata(String(chunk.hash));
-                saveChunkMetadata(String(newHash), { ...oldMeta });
+                deleteChunkMetadata(String(chunk.hash), currentMetadataKey);
+                saveChunkMetadata(String(newHash), { ...oldMeta }, currentMetadataKey);
             }
 
             // Update local state - update hash but keep same uniqueId for selection
@@ -2236,7 +2240,7 @@ async function deleteChunk(chunk) {
 
     try {
         await deleteVectorItems(currentCollectionId, [chunk.hash], currentSettings);
-        deleteChunkMetadata(chunk.hash);
+        deleteChunkMetadata(chunk.hash, currentMetadataKey);
 
         // Remove from local state by uniqueId
         const idx = allChunks.findIndex(c => c.uniqueId === chunk.uniqueId);
@@ -2260,7 +2264,7 @@ async function deleteChunk(chunk) {
 function bulkSetEnabled(enabled) {
     for (const chunk of filteredChunks) {
         chunk.data.enabled = enabled;
-        updateChunkData(chunk.hash, { enabled });
+        updateChunkData(chunk.hash, { enabled, disabled: !enabled });
     }
     renderChunkList();
     if (selectedChunkId) renderDetailPanel();

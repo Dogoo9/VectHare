@@ -3424,6 +3424,7 @@ function renderSearchResults(results, query, originalResults = null) {
         const collectionSettings = {
           ...browserState.settings,
           vector_backend: collection.backend,
+          collection_locator: getCollectionMeta(collection.registryKey).storageLocator || { backend: collection.backend, source: collection.source, model: collection.model ?? "", collectionId: collection.id },
         };
 
         // Use unified plugin endpoint

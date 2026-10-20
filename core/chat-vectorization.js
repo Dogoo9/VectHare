@@ -242,7 +242,7 @@ function groupMessagesByStrategy(messages, strategy, batchSize = 4, keywordLevel
  */
 function filterSceneDisabledChunks(chunks) {
     const filtered = chunks.filter(chunk => {
-        const isDisabled = isChunkDisabledByScene(chunk.hash);
+        const isDisabled = isChunkDisabledByScene(chunk.hash, chunk.collectionId);
         if (isDisabled) {
             console.debug(`VectHare: Chunk ${chunk.hash} is disabled by scene`);
         }
@@ -263,12 +263,9 @@ function filterSceneDisabledChunks(chunks) {
  */
 export function filterManuallyDisabledChunks(chunks) {
     return chunks.filter(chunk => {
-        const stored = getChunkMetadata(chunk.hash);
-        const backend = chunk.metadata || {};
-        return stored?.enabled !== false
-            && stored?.disabled !== true
-            && backend.enabled !== false
-            && backend.disabled !== true;
+        const stored = getChunkMetadata(chunk.hash, chunk.collectionId);
+        const effective = { ...chunk.metadata, ...stored };
+        return effective.enabled !== false && effective.disabled !== true;
     });
 }
 
@@ -288,7 +285,7 @@ export function promoteKeywordMatches(chunks, queryText, extractedKeywords = [])
 
     let matchedCount = 0;
     for (const chunk of chunks) {
-        const storedKeywords = getChunkMetadata(chunk.hash)?.keywords;
+        const storedKeywords = getChunkMetadata(chunk.hash, chunk.collectionId)?.keywords;
         const rawKeywords = storedKeywords ?? chunk.metadata?.keywords ?? chunk.keywords ?? [];
         const matchedKeywords = rawKeywords
             .filter(keyword => typeof keyword !== 'object' || keyword.enabled !== false)
@@ -333,7 +330,7 @@ async function applyChunkConditions(chunks, chat, settings, trackActivations = t
 
     // Check if any chunks have conditions (from chunk metadata)
     const chunksWithConditions = filtered.map(chunk => {
-        const chunkMeta = getChunkMetadata(chunk.hash);
+        const chunkMeta = getChunkMetadata(chunk.hash, chunk.collectionId);
         if (chunkMeta?.conditions?.enabled) {
             return { ...chunk, conditions: chunkMeta.conditions };
         }
@@ -1337,7 +1334,7 @@ async function applyGroupsAndLinksStage(chunks, activeCollections, settings, deb
         // PERF: Build chunk metadata map ONCE and reuse for both virtual and explicit links
         const chunkMetadataMap = new Map();
         for (const chunk of processedChunks) {
-            const meta = getChunkMetadata(chunk.hash) || {};
+            const meta = getChunkMetadata(chunk.hash, chunk.collectionId) || {};
             chunkMetadataMap.set(String(chunk.hash), meta);
         }
 
@@ -1399,7 +1396,7 @@ async function applyGroupsAndLinksStage(chunks, activeCollections, settings, deb
         // PERF: Build metadata map once for chunks with links only
         const chunkMetadataMap = new Map();
         for (const chunk of processedChunks) {
-            const meta = getChunkMetadata(chunk.hash) || {};
+            const meta = getChunkMetadata(chunk.hash, chunk.collectionId) || {};
             if (meta.links && meta.links.length > 0) {
                 chunkMetadataMap.set(String(chunk.hash), meta);
             }
@@ -1552,7 +1549,7 @@ function buildNestedInjectionText(chunks, settings) {
 
         // Build chunk texts with per-chunk wrapping
         const chunkTexts = collChunks.map(chunk => {
-            const chunkMeta = getChunkMetadata(chunk.hash) || {};
+            const chunkMeta = getChunkMetadata(chunk.hash, chunk.collectionId) || {};
             const chunkContext = chunkMeta.context ? substituteParams(chunkMeta.context) : '';
             const chunkXmlTag = chunkMeta.xmlTag || '';
             const text = chunk.text || '(text not available)';
@@ -1614,7 +1611,7 @@ function buildNestedInjectionText(chunks, settings) {
  * @returns {{position: number, depth: number}} Resolved position and depth
  */
 function resolveChunkInjectionPosition(chunk, settings) {
-    const chunkMeta = getChunkMetadata(chunk.hash) || {};
+    const chunkMeta = getChunkMetadata(chunk.hash, chunk.collectionId) || {};
     const collMeta = getCollectionMeta(chunk.collectionId) || {};
 
     // Cascade: chunk → collection → global

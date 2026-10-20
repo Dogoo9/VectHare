@@ -27,6 +27,7 @@ import {
     insertVectorItems,
     deleteVectorItems,
 } from './core-vector-api.js';
+import { collectionMetadataKey } from './collection-runtime.js';
 import { getChatCollectionId } from './chat-vectorization.js';
 import {
     getChunkMetadata,
@@ -131,7 +132,7 @@ export function getContainedChunkHashes(messages, start, end) {
  * @returns {Promise<{success: boolean, hash?: number, error?: string}>}
  */
 export async function createSceneChunk(start, end, sceneData, settings) {
-    const collectionId = getCurrentCollectionId();
+    const collectionId = collectionMetadataKey(getCurrentCollectionId(), settings);
     if (!collectionId) {
         return { success: false, error: 'No chat selected' };
     }
@@ -178,12 +179,12 @@ export async function createSceneChunk(start, end, sceneData, settings) {
 
         // Disable contained chunks
         for (const hash of containedHashes) {
-            const existing = getChunkMetadata(hash) || {};
+            const existing = getChunkMetadata(hash, collectionId) || {};
             saveChunkMetadata(hash, {
                 ...existing,
                 disabledByScene: sceneHash,
                 disabledAt: Date.now(),
-            });
+            }, collectionId);
         }
 
         console.log(`VectHare Scenes: Created scene chunk ${sceneHash} (${start}-${end}), disabled ${containedHashes.length} chunks`);
@@ -202,8 +203,8 @@ export async function createSceneChunk(start, end, sceneData, settings) {
  * @param {object} settings - VectHare settings
  * @returns {Promise<{success: boolean, error?: string}>}
  */
-export async function deleteSceneChunk(sceneHash, containedHashes, settings) {
-    const collectionId = getCurrentCollectionId();
+export async function deleteSceneChunk(sceneHash, containedHashes, settings, selectedCollectionId) {
+    const collectionId = collectionMetadataKey(selectedCollectionId || getCurrentCollectionId(), settings);
     if (!collectionId) {
         return { success: false, error: 'No chat selected' };
     }
@@ -214,13 +215,13 @@ export async function deleteSceneChunk(sceneHash, containedHashes, settings) {
 
         // Re-enable contained chunks
         for (const hash of containedHashes) {
-            const existing = getChunkMetadata(hash);
+            const existing = getChunkMetadata(hash, collectionId);
             if (existing && existing.disabledByScene === sceneHash) {
                 const { disabledByScene, disabledAt, ...rest } = existing;
                 if (Object.keys(rest).length > 0) {
-                    saveChunkMetadata(hash, rest);
+                    saveChunkMetadata(hash, rest, collectionId);
                 } else {
-                    deleteChunkMetadata(hash);
+                    deleteChunkMetadata(hash, collectionId);
                 }
             }
         }
@@ -242,9 +243,10 @@ export async function deleteSceneChunk(sceneHash, containedHashes, settings) {
  * @param {object} settings - VectHare settings
  * @returns {Promise<{success: boolean, error?: string}>}
  */
-export async function updateSceneChunkMetadata(sceneHash, updates, settings) {
+export async function updateSceneChunkMetadata(sceneHash, updates, settings, selectedCollectionId) {
+    const collectionId = collectionMetadataKey(selectedCollectionId || getCurrentCollectionId(), settings);
     // Scene metadata is stored in chunk metadata, not vector DB
-    const existing = getChunkMetadata(sceneHash) || {};
+    const existing = getChunkMetadata(sceneHash, collectionId) || {};
 
     const updatedMeta = {
         ...existing,
@@ -254,7 +256,7 @@ export async function updateSceneChunkMetadata(sceneHash, updates, settings) {
         updatedAt: Date.now(),
     };
 
-    saveChunkMetadata(sceneHash, updatedMeta);
+    saveChunkMetadata(sceneHash, updatedMeta, collectionId);
     console.log(`VectHare Scenes: Updated metadata for scene ${sceneHash}`);
     return { success: true };
 }
@@ -268,8 +270,8 @@ export async function updateSceneChunkMetadata(sceneHash, updates, settings) {
  * @param {number} hash - Chunk hash
  * @returns {boolean}
  */
-export function isChunkDisabledByScene(hash) {
-    const meta = getChunkMetadata(hash);
+export function isChunkDisabledByScene(hash, collectionId) {
+    const meta = getChunkMetadata(hash, collectionId);
     return meta?.disabledByScene != null;
 }
 
@@ -278,8 +280,8 @@ export function isChunkDisabledByScene(hash) {
  * @param {number} hash - Chunk hash
  * @returns {number|null}
  */
-export function getDisablingSceneHash(hash) {
-    const meta = getChunkMetadata(hash);
+export function getDisablingSceneHash(hash, collectionId) {
+    const meta = getChunkMetadata(hash, collectionId);
     return meta?.disabledByScene ?? null;
 }
 
@@ -307,7 +309,7 @@ export function filterNonSceneChunks(chunks) {
  * @returns {object[]} Chunks not disabled by scenes
  */
 export function filterDisabledChunks(chunks) {
-    return chunks.filter(chunk => !isChunkDisabledByScene(chunk.hash));
+    return chunks.filter(chunk => !isChunkDisabledByScene(chunk.hash, chunk.collectionId));
 }
 
 // ============================================================================

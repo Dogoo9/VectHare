@@ -541,7 +541,8 @@ export function isCollectionAutoSyncEnabled(collectionId) {
 // ============================================================================
 // CHUNK METADATA (per-chunk settings, stored separately)
 // ============================================================================
-// Chunk metadata is stored per-hash and can include:
+// Chunk metadata is stored per collection and hash. Legacy hash-only settings
+// remain readable until overridden; scoped writes never change a peer's state.
 // - conditions: { ... }     - Conditional activation rules
 // - sceneId: string         - Scene boundary marker
 // - links: []               - Soft/hard links to other chunks
@@ -555,32 +556,52 @@ export function isCollectionAutoSyncEnabled(collectionId) {
 /**
  * Gets metadata for a specific chunk
  * @param {string} hash Chunk hash
+ * @param {string} [collectionId] Collection registry key (preferred) or unambiguous ID
  * @returns {object|null} Chunk metadata or null if not found
  */
-export function getChunkMetadata(hash) {
+export function getChunkMetadata(hash, collectionId) {
     if (!extension_settings.vecthare) {
         return null;
     }
 
-    const key = `vecthare_chunk_meta_${hash}`;
-    return extension_settings.vecthare[key] || null;
+    const storedKey = collectionId ? resolveStoredCollectionKey(collectionId) : null;
+    const scoped = storedKey ? extension_settings.vecthare.collections[storedKey].chunkMetadata : null;
+    const metadata = scoped && Object.hasOwn(scoped, hash)
+        ? scoped[hash]
+        : extension_settings.vecthare[`vecthare_chunk_meta_${hash}`];
+    // Callers may edit nested fields before saving. Never return shared objects.
+    return metadata ? structuredClone(metadata) : null;
+}
+
+function writeScopedChunkMetadata(collectionId, hash, metadata) {
+    ensureCollectionsObject();
+    const key = resolveStoredCollectionKey(collectionId) || collectionId;
+    const collection = extension_settings.vecthare.collections[key] ||= {};
+    collection.chunkMetadata = { ...collection.chunkMetadata, [hash]: metadata };
+    saveSettingsDebounced();
 }
 
 /**
  * Saves metadata for a specific chunk
  * @param {string} hash Chunk hash
  * @param {object} metadata Chunk metadata
+ * @param {string} [collectionId] Collection registry key (preferred) or unambiguous ID
  */
-export function saveChunkMetadata(hash, metadata) {
+export function saveChunkMetadata(hash, metadata, collectionId) {
     if (!extension_settings.vecthare) {
         extension_settings.vecthare = {};
     }
 
-    const key = `vecthare_chunk_meta_${hash}`;
-    extension_settings.vecthare[key] = {
-        ...metadata,
+    const saved = {
+        ...structuredClone(metadata),
         updatedAt: Date.now(),
     };
+    if (collectionId) {
+        writeScopedChunkMetadata(collectionId, hash, saved);
+        return;
+    }
+    const key = `vecthare_chunk_meta_${hash}`;
+    extension_settings.vecthare[key] = saved;
 
     saveSettingsDebounced();
 }
@@ -588,12 +609,18 @@ export function saveChunkMetadata(hash, metadata) {
 /**
  * Deletes metadata for a specific chunk
  * @param {string} hash Chunk hash
+ * @param {string} [collectionId] Collection registry key (preferred) or unambiguous ID
  */
-export function deleteChunkMetadata(hash) {
+export function deleteChunkMetadata(hash, collectionId) {
     if (!extension_settings.vecthare) {
         return;
     }
 
+    if (collectionId) {
+        // A tombstone prevents legacy settings from reappearing after deletion.
+        writeScopedChunkMetadata(collectionId, hash, null);
+        return;
+    }
     const key = `vecthare_chunk_meta_${hash}`;
     if (extension_settings.vecthare[key]) {
         delete extension_settings.vecthare[key];
@@ -1466,12 +1493,12 @@ export function getCollectionDecaySummary(collectionId) {
  * @param {string} hash Chunk hash
  * @param {boolean} isBlind Whether the chunk is temporally blind
  */
-export function setChunkTemporallyBlind(hash, isBlind) {
-    const existing = getChunkMetadata(hash) || {};
+export function setChunkTemporallyBlind(hash, isBlind, collectionId) {
+    const existing = getChunkMetadata(hash, collectionId) || {};
     saveChunkMetadata(hash, {
         ...existing,
         temporallyBlind: isBlind,
-    });
+    }, collectionId);
     console.log(`VectHare: Chunk ${hash} temporally blind: ${isBlind}`);
 }
 
@@ -1480,8 +1507,8 @@ export function setChunkTemporallyBlind(hash, isBlind) {
  * @param {string} hash Chunk hash
  * @returns {boolean} Whether the chunk is immune to decay
  */
-export function isChunkTemporallyBlind(hash) {
-    const meta = getChunkMetadata(hash);
+export function isChunkTemporallyBlind(hash, collectionId) {
+    const meta = getChunkMetadata(hash, collectionId);
     return meta?.temporallyBlind === true;
 }
 

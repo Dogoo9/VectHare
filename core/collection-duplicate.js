@@ -1,7 +1,7 @@
 import { extension_settings } from '../../../../extensions.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { getBackend } from '../backends/backend-manager.js';
-import { getCollectionMeta, setCollectionMeta } from './collection-metadata.js';
+import { getCollectionMeta, setCollectionMeta, getChunkMetadata } from './collection-metadata.js';
 import { getCollectionRegistry, registerCollection } from './collection-loader.js';
 import { lockCollections, physicalCollectionId, resolveCollectionSettings } from './collection-runtime.js';
 import { collectionStorageKey, storageSettings } from './collection-portability.js';
@@ -53,7 +53,12 @@ export async function duplicateCollectionToQdrant(key, name, settings, { onProgr
             throw new Error('Every chunk must have a valid stored vector of the same dimension to duplicate without re-embedding.');
         }
         const meta = structuredClone(getCollectionMeta(key));
+        // Hashes describe content and must stay stable for links and summaries.
+        // Snapshot local overrides into the destination's own namespace, including
+        // null entries so later legacy changes cannot leak into the duplicate.
+        const chunkMetadata = Object.fromEntries(items.map(item => [String(item.hash), getChunkMetadata(item.hash, key)]));
         setCollectionMeta(targetKey, { ...meta, displayName: targetId, storageLocator: locator, enabled: false, autoSync: false,
+            chunkMetadata,
             migration: null, previousEmbeddingConnection: null, createdAt: Date.now(),
             importState: { status: 'building', sourceKey: key } });
         reserved = true;
