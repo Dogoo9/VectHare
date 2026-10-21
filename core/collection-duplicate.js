@@ -10,21 +10,47 @@ import { readMigrationItems, verifyMigrationContent } from './embedding-migratio
 import { indexLexicalItems } from './lexical-index.js';
 
 const pendingNames = new Set();
+const normalizeBackend = backend => backend === 'vectra' ? 'standard' : backend;
+export const DUPLICATION_BACKENDS = Object.freeze({
+    standard: 'Standard (Vectra)',
+    lancedb: 'LanceDB',
+    qdrant: 'Qdrant',
+});
 
-/** Copy stored embeddings verbatim. The original inference service is never called. */
-export async function duplicateCollectionToQdrant(key, name, settings, { onProgress } = {}) {
+// Discovery includes bare IDs, backend:id and backend:source:id forms. Names
+// may be reused across backends, but never overwrite a destination on disk.
+function destinationExists(record, targetId, targetBackend) {
+    const raw = String(record.id || record.collectionId || '');
+    const parsed = parseRegistryKey(raw);
+    const prefix = /^(standard|vectra|lancedb|qdrant|milvus):/.exec(raw)?.[1];
+    const backend = normalizeBackend(record.backend || parsed.backend || prefix);
+    const id = parsed.backend ? parsed.collectionId : prefix ? raw.slice(prefix.length + 1) : parsed.collectionId;
+    return id === targetId && (!backend || backend === targetBackend);
+}
+
+/** Copy stored embeddings verbatim into an independent physical collection. */
+export async function duplicateCollection(key, name, settings, { targetBackend, onProgress } = {}) {
     const targetId = String(name || '').trim();
-    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(targetId)) throw new Error('Use 1–160 letters, numbers, underscores or hyphens for the Qdrant collection name.');
-    if (settings.qdrant_multitenancy) throw new Error('Turn off Qdrant multitenancy in settings to create a separately named collection.');
-    if (pendingNames.has(targetId)) throw new Error('A duplicate with that name is already being created.');
+    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(targetId)) throw new Error('Use 1–160 letters, numbers, underscores or hyphens for the collection name.');
     const sourceSettings = resolveCollectionSettings(key, settings);
     const sourceId = physicalCollectionId(key, sourceSettings);
     const sourceLocator = sourceSettings.collection_locator || { backend: settings.vector_backend || 'standard', source: settings.source || 'transformers', model: settings.model || '', collectionId: sourceId };
-    if (sourceLocator.backend === 'qdrant' && sourceId === targetId) throw new Error('Choose a name different from the source collection.');
-    const locator = { ...sourceLocator, backend: 'qdrant', collectionId: targetId };
-    const targetKey = `qdrant:${locator.source}:${targetId}`;
-    const targetSettings = { ...sourceSettings, vector_backend: 'qdrant', collection_locator: locator, storageLocator: null, qdrant_multitenancy: false, _storageReadOnly: false };
-    pendingNames.add(targetId);
+    targetBackend = normalizeBackend(targetBackend || sourceLocator.backend);
+    if (!Object.hasOwn(DUPLICATION_BACKENDS, targetBackend)) {
+        throw new Error(targetBackend === 'milvus'
+            ? 'Milvus uses shared storage and cannot create an independent duplicate. Choose Standard, LanceDB or Qdrant.'
+            : 'Unsupported destination backend. Choose Standard, LanceDB or Qdrant.');
+    }
+    if (settings.qdrant_multitenancy && (sourceLocator.backend === 'qdrant' || targetBackend === 'qdrant')) {
+        throw new Error('Turn off Qdrant multitenancy in settings to duplicate a separately named collection.');
+    }
+    if (normalizeBackend(sourceLocator.backend) === targetBackend && sourceId === targetId) throw new Error('Choose a name different from the source collection.');
+    const pendingKey = `${targetBackend}:${targetId}`;
+    if (pendingNames.has(pendingKey)) throw new Error('A duplicate with that name is already being created.');
+    const locator = { ...sourceLocator, backend: targetBackend, collectionId: targetId };
+    const targetKey = `${targetBackend}:${locator.source}:${targetId}`;
+    const targetSettings = { ...sourceSettings, vector_backend: targetBackend, collection_locator: locator, storageLocator: null, qdrant_multitenancy: false, _storageReadOnly: false };
+    pendingNames.add(pendingKey);
     let unlock;
     let reserved = false;
     try {
@@ -33,18 +59,20 @@ export async function duplicateCollectionToQdrant(key, name, settings, { onProgr
         if (knownKeys.some(k => {
             const parsed = parseRegistryKey(k);
             const stored = extension_settings.vecthare?.collections?.[k]?.storageLocator;
-            return (stored?.collectionId || parsed.collectionId) === targetId;
+            return destinationExists({ id: stored?.collectionId || k, backend: stored?.backend || parsed.backend }, targetId, targetBackend);
         })) throw new Error('Collection name already exists. Choose a new name.');
-        // Initialize Qdrant even when the source uses another storage backend.
+        // Initialize storage adapters, including Standard's plugin capability,
+        // before storage-only enumeration. This does not generate embeddings.
+        await getBackend({ ...storageSettings(sourceSettings), _storageReadOnly: false });
         const backend = await getBackend(storageSettings(targetSettings));
+        if (targetBackend === 'standard' && !backend.pluginAvailable) {
+            throw new Error('Similharity is required to copy and verify stored vectors and metadata in Standard storage.');
+        }
         const response = await fetch('/api/plugins/similharity/collections', { headers: getRequestHeaders() });
         if (!response.ok) throw new Error('Similharity collection discovery is required to check the destination name.');
         const data = await response.json();
         if (!Array.isArray(data.collections) || data.success === false) throw new Error('Cannot verify that the destination name is unused.');
-        if (data.collections.some(c => {
-            const id = String(c.id || c.collectionId || '');
-            return id === targetId || parseRegistryKey(id).collectionId === targetId || id === `${c.backend}:${targetId}`;
-        })) throw new Error('Collection name already exists on disk. Choose a new name.');
+        if (data.collections.some(c => destinationExists(c, targetId, targetBackend))) throw new Error('Collection name already exists on disk. Choose a new name.');
         onProgress?.('Reading stored vectors…');
         const items = await readMigrationItems(sourceId, sourceSettings);
         if (!items.length) throw new Error('The source collection is empty.');
@@ -78,6 +106,11 @@ export async function duplicateCollectionToQdrant(key, name, settings, { onProgr
         throw error;
     } finally {
         unlock?.();
-        pendingNames.delete(targetId);
+        pendingNames.delete(pendingKey);
     }
+}
+
+/** Compatibility entry point for callers of the original Qdrant-only action. */
+export function duplicateCollectionToQdrant(key, name, settings, options = {}) {
+    return duplicateCollection(key, name, settings, { ...options, targetBackend: 'qdrant' });
 }

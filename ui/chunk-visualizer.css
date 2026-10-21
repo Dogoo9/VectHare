@@ -214,6 +214,25 @@
     border-color: var(--vecthare-primary);
 }
 
+.vecthare-chunk-item.bulk-selected {
+    border-color: var(--vecthare-primary);
+    background: color-mix(in srgb, var(--vecthare-primary) 12%, transparent);
+}
+
+.vecthare-chunk-select {
+    align-self: center;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--vecthare-primary);
+}
+
+.vecthare-chunk-select:focus-visible {
+    outline: 2px solid var(--vecthare-primary);
+    outline-offset: 3px;
+}
+
 .vecthare-chunk-item.disabled {
     opacity: 0.5;
 }
@@ -370,7 +389,18 @@
 
 .vecthare-bulk-buttons {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
+}
+
+#vecthare_chunk_bulk_count {
+    flex-basis: 100%;
+    font-size: 0.85em;
+}
+
+.vecthare-bulk-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
 }
 
 .vecthare-bulk-btn {

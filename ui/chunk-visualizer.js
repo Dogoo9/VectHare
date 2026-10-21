@@ -62,7 +62,7 @@ let sortBy = 'index'; // 'index', 'length-desc', 'length-asc', 'keywords', 'modi
 let filterBy = 'all'; // 'all', 'enabled', 'disabled', 'conditions', 'blind'
 let searchQuery = '';
 let bulkSelectMode = false;
-let selectedHashes = new Set();
+let selectedChunkIds = new Set();
 let hasUnsavedChanges = false;
 let pendingChanges = new Map(); // hash -> {keywords, enabled, conditions, etc.}
 let plaintextKeywordMode = false; // Toggle for plaintext keyword editing
@@ -261,9 +261,11 @@ export function openVisualizer(results, collectionId, settings) {
     currentMetadataKey = collectionMetadataKey(collectionId, settings);
     selectedChunkId = null;
     displayLimit = 50;
+    sortBy = 'index';
+    filterBy = 'all';
     searchQuery = '';
     bulkSelectMode = false;
-    selectedHashes.clear();
+    selectedChunkIds.clear();
     pendingChanges.clear();
     hasUnsavedChanges = false;
     activeTab = 'chunks'; // Reset to chunks tab on open
@@ -440,12 +442,15 @@ function createModal() {
                         <div class="vecthare-chunk-list" id="vecthare_chunk_list"></div>
                         <div class="vecthare-bulk-actions">
                             <label class="vecthare-bulk-toggle">
-                                <input type="checkbox" id="vecthare_bulk_mode">
+                                <input type="checkbox" id="vecthare_chunk_bulk_mode">
                                 <span>Bulk Select Mode</span>
                             </label>
-                            <div class="vecthare-bulk-buttons" id="vecthare_bulk_buttons" style="display: none;">
-                                <button class="vecthare-bulk-btn" id="vecthare_bulk_enable">Enable All</button>
-                                <button class="vecthare-bulk-btn" id="vecthare_bulk_disable">Disable All</button>
+                            <div class="vecthare-bulk-buttons" id="vecthare_chunk_bulk_buttons" style="display: none;">
+                                <span id="vecthare_chunk_bulk_count" role="status" aria-live="polite">0 selected</span>
+                                <button class="vecthare-bulk-btn" id="vecthare_chunk_bulk_select_filtered">Select filtered</button>
+                                <button class="vecthare-bulk-btn" id="vecthare_chunk_bulk_clear">Clear selection</button>
+                                <button class="vecthare-bulk-btn" id="vecthare_chunk_bulk_enable" disabled>Enable selected</button>
+                                <button class="vecthare-bulk-btn" id="vecthare_chunk_bulk_disable" disabled>Disable selected</button>
                             </div>
                         </div>
                         <div class="vecthare-list-status" id="vecthare_list_status"></div>
@@ -1275,6 +1280,21 @@ function renderChunkList() {
 
     container.html(html);
     updateStatusBar();
+    updateBulkControls();
+}
+
+function updateBulkControls() {
+    const count = selectedChunkIds.size;
+    const visibleCount = filteredChunks.filter(chunk => selectedChunkIds.has(chunk.uniqueId)).length;
+    $('#vecthare_chunk_bulk_count').text(`${count} selected${count > visibleCount ? ` (${count - visibleCount} hidden by filter)` : ''}`);
+    $('#vecthare_chunk_bulk_enable, #vecthare_chunk_bulk_disable, #vecthare_chunk_bulk_clear').prop('disabled', count === 0);
+    $('#vecthare_chunk_bulk_select_filtered').prop('disabled', filteredChunks.length === 0);
+    document.querySelectorAll('#vecthare_chunk_list .vecthare-chunk-item').forEach(row => {
+        const selected = bulkSelectMode && selectedChunkIds.has(row.dataset.uid);
+        row.classList.toggle('bulk-selected', selected);
+        const checkbox = row.querySelector('.vecthare-chunk-select');
+        if (checkbox) checkbox.checked = selected;
+    });
 }
 
 function renderChunkItem(chunk, listIndex) {
@@ -1321,6 +1341,8 @@ function renderChunkItem(chunk, listIndex) {
     return `
         <div class="vecthare-chunk-item ${isSelected ? 'selected' : ''} ${!data.enabled ? 'disabled' : ''}"
              data-uid="${chunk.uniqueId}" data-list-index="${listIndex}">
+            ${bulkSelectMode ? `<input type="checkbox" class="vecthare-chunk-select" data-uid="${chunk.uniqueId}"
+                aria-label="Select chunk ${displayNumber}" ${selectedChunkIds.has(chunk.uniqueId) ? 'checked' : ''}>` : ''}
             <div class="vecthare-chunk-item-content">
                 <div class="vecthare-chunk-item-header">
                     <span class="vecthare-chunk-item-index">${displayNumber}.</span>
@@ -1693,12 +1715,19 @@ function bindEvents() {
 
     // Chunk selection - bind to container, not document (because modal stops propagation)
     $('#vecthare_visualizer_modal').on('click', '.vecthare-chunk-item', function(e) {
+        if (e.target.closest('.vecthare-chunk-select')) return;
         e.preventDefault();
         e.stopPropagation();
         const uid = $(this).attr('data-uid');
         console.log('VectHare: Clicked chunk with uniqueId:', uid);
         if (!uid) {
             console.error('VectHare: No uniqueId found on clicked element');
+            return;
+        }
+        if (bulkSelectMode) {
+            if (selectedChunkIds.has(uid)) selectedChunkIds.delete(uid);
+            else selectedChunkIds.add(uid);
+            updateBulkControls();
             return;
         }
         // Warn if switching chunks with unsaved changes
@@ -1720,13 +1749,30 @@ function bindEvents() {
     });
 
     // Bulk mode
-    $('#vecthare_bulk_mode').on('change', function() {
+    $('#vecthare_chunk_bulk_mode').on('change', function() {
         bulkSelectMode = $(this).is(':checked');
-        $('#vecthare_bulk_buttons').toggle(bulkSelectMode);
+        if (!bulkSelectMode) selectedChunkIds.clear();
+        $('#vecthare_chunk_bulk_buttons').toggle(bulkSelectMode);
+        renderChunkList();
+    });
+    $('#vecthare_visualizer_modal').on('change', '.vecthare-chunk-select', function() {
+        if (!bulkSelectMode) return;
+        const uid = this.dataset.uid;
+        if (this.checked) selectedChunkIds.add(uid);
+        else selectedChunkIds.delete(uid);
+        updateBulkControls();
+    });
+    $('#vecthare_chunk_bulk_select_filtered').on('click', () => {
+        filteredChunks.forEach(chunk => selectedChunkIds.add(chunk.uniqueId));
+        updateBulkControls();
+    });
+    $('#vecthare_chunk_bulk_clear').on('click', () => {
+        selectedChunkIds.clear();
+        updateBulkControls();
     });
 
-    $('#vecthare_bulk_enable').on('click', () => bulkSetEnabled(true));
-    $('#vecthare_bulk_disable').on('click', () => bulkSetEnabled(false));
+    $('#vecthare_chunk_bulk_enable').on('click', () => bulkSetEnabled(true));
+    $('#vecthare_chunk_bulk_disable').on('click', () => bulkSetEnabled(false));
 }
 
 function bindDetailEvents() {
@@ -2241,6 +2287,7 @@ async function deleteChunk(chunk) {
     try {
         await deleteVectorItems(currentCollectionId, [chunk.hash], currentSettings);
         deleteChunkMetadata(chunk.hash, currentMetadataKey);
+        selectedChunkIds.delete(chunk.uniqueId);
 
         // Remove from local state by uniqueId
         const idx = allChunks.findIndex(c => c.uniqueId === chunk.uniqueId);
@@ -2262,13 +2309,21 @@ async function deleteChunk(chunk) {
 // ============================================================================
 
 function bulkSetEnabled(enabled) {
-    for (const chunk of filteredChunks) {
+    if (!bulkSelectMode || selectedChunkIds.size === 0) return;
+    const selected = allChunks.filter(chunk => selectedChunkIds.has(chunk.uniqueId));
+    for (const chunk of selected) {
+        const updates = { enabled, disabled: !enabled };
+        saveChunkMetadata(chunk.hash, { ...getChunkMetadata(chunk.hash, currentMetadataKey), ...updates }, currentMetadataKey);
         chunk.data.enabled = enabled;
-        updateChunkData(chunk.hash, { enabled, disabled: !enabled });
+        // A later Save Changes must not restore an older pending toggle.
+        if (pendingChanges.has(chunk.hash)) {
+            pendingChanges.set(chunk.hash, { ...pendingChanges.get(chunk.hash), ...updates });
+        }
     }
+    applyFilters();
     renderChunkList();
     if (selectedChunkId) renderDetailPanel();
-    toastr.success(`${enabled ? 'Enabled' : 'Disabled'} ${filteredChunks.length} chunks`, 'VectHare');
+    toastr.success(`${enabled ? 'Enabled' : 'Disabled'} ${selected.length} selected chunks`, 'VectHare');
 }
 
 // ============================================================================
