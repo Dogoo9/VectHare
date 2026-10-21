@@ -72,7 +72,8 @@ VectHare is an **advanced Retrieval-Augmented Generation (RAG) system** for Sill
 - View chunk counts and metadata
 - Enable/disable collections on the fly
 - Export and import collections for backup/sharing
-- Duplicate collections to Qdrant with a name you choose, preserving stored vectors and metadata without re-embedding. Use **Duplicate to Qdrant** on a collection card; names accept 1–160 letters, numbers, underscores or hyphens. Qdrant multitenancy must be off. Verified copies start paused so you can enable them when ready; incomplete copies remain paused for review or deletion.
+- Use **Duplicate collection** on a collection card to choose a name and destination: Standard (Vectra), LanceDB or Qdrant. The destination defaults to the source backend. Copies preserve stored vectors and metadata without re-embedding; Similharity and a configured destination connection are required. Names accept 1–160 letters, numbers, underscores or hyphens. Qdrant multitenancy must be off when Qdrant is involved. Milvus destinations are unavailable because its adapter uses shared storage. Verified copies start paused so you can enable them when ready; incomplete copies remain paused for review or deletion.
+- In the chunk visualizer, **Bulk select mode** shows a checkbox for each chunk. Enable or disable only the selected chunks, with changes saved immediately. **Select filtered** includes matches beyond the loaded page; selections survive sorting and filtering, and the count identifies any hidden selections.
 
 Duplicates have independent chunk settings: enable/disable switches, keywords,
 conditions, scene state and temporal immunity are saved per collection. Hashes

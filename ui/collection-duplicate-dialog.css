@@ -1,0 +1,34 @@
+.vecthare-duplicate-overlay {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    inset: 0;
+    z-index: 10010;
+    background: rgb(0 0 0 / 60%);
+    padding: 16px;
+}
+
+.vecthare-duplicate-dialog {
+    width: min(540px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 24px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 12px;
+    background: var(--SmartThemeBlurTintColor, #242424);
+    color: var(--SmartThemeBodyColor, #eee);
+    box-shadow: 0 16px 48px rgb(0 0 0 / 35%);
+}
+
+.vecthare-duplicate-dialog h3, .vecthare-duplicate-dialog p { margin: 0; }
+.vecthare-duplicate-dialog label { display: flex; flex-direction: column; gap: 6px; }
+.vecthare-duplicate-dialog .text_pole { width: 100%; box-sizing: border-box; }
+.vecthare-duplicate-hint { font-size: 0.9em; opacity: 0.8; line-height: 1.5; }
+.vecthare-duplicate-dialog [data-status] { min-height: 1.5em; overflow-wrap: anywhere; }
+.vecthare-duplicate-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.vecthare-duplicate-submit { border-color: var(--vecthare-primary); }
+.vecthare-duplicate-dialog button:disabled { opacity: 0.5; cursor: default; }
