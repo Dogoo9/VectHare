@@ -36,7 +36,7 @@ import { buildSearchContext, filterChunksByConditions, processChunkLinks } from 
 import { getChunkMetadata, getCollectionMeta } from './collection-metadata.js';
 import { processChunkGroups, mergeVirtualLinks } from './chunk-groups.js';
 import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '../ui/search-debug.js';
-import { Queue, LRUCache } from '../utils/data-structures.js';
+import { LRUCache } from '../utils/data-structures.js';
 import { getRequestHeaders } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
 import { resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
@@ -436,13 +436,13 @@ async function rerankWithBananaBread(query, chunks, settings) {
 }
 
 /**
- * Synchronizes chat with vector index using simple FIFO queue
+ * Synchronizes chat with the vector index.
  *
  * How it works:
  * 1. Get all messages, get all vectorized hashes from DB
- * 2. Queue = messages not yet in DB (by hash)
- * 3. Process batch: take message, chunk it, insert chunks, remove from queue
- * 4. Repeat until queue empty
+ * 2. Pending = grouped items whose hash is not yet in the DB
+ * 3. Insert the first `batchSize` pending items in one call
+ * 4. Callers repeat until `remaining` is 0
  *
  * @param {object} settings VectHare settings
  * @param {number} batchSize Number of messages to process per call
@@ -520,61 +520,48 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
         const groupedItems = groupMessagesByStrategy(allMessages, strategy, strategyBatchSize, keywordLevel);
 
         // Filter out already vectorized items (by their grouped hash)
-        const queue = new Queue();
-        for (const item of groupedItems) {
-            if (!existingHashes.has(item.hash)) {
-                queue.enqueue(item);
-            }
-        }
-
-        if (queue.isEmpty()) {
+        const pending = groupedItems.filter(item => !existingHashes.has(item.hash));
+        if (pending.length === 0) {
             return { remaining: 0, messagesProcessed: 0, chunksCreated: 0 };
         }
 
-        // Step 3: Process batch
-        let itemsProcessed = 0;
+        // Step 3: Insert the next batch in a single call so the embedding
+        // provider receives one request instead of one per message.
+        const batch = pending.slice(0, batchSize);
+        const label = strategy === 'per_message' ? 'Message' : 'Group';
         let chunksCreated = 0;
         let itemsFailed = 0;
-        const label = strategy === 'per_message' ? 'Message' : 'Group';
 
-        while (!queue.isEmpty() && itemsProcessed < batchSize) {
-            const item = queue.dequeue();
-
-            try {
-                // Prepare item for insertion (add source metadata)
-                const chunks = prepareItemsForInsertion([item]);
-
-                // Insert chunks (insertVectorItems handles duplicates at DB level)
-                if (chunks.length > 0) {
-                    await insertVectorItems(collectionId, chunks, settings, (embedded, total) => {
-                        // Update progress tracker with embedding progress
-                        progressTracker.updateEmbeddingProgress(embedded, total);
-
-                        // Determine phase based on progress (0-50% = Embedding, 50-100% = Writing)
-                        const progressPercent = (embedded / total) * 100;
-                        const phase = progressPercent <= 50 ? 'Embedding' : 'Writing to database';
-                        progressTracker.updateCurrentItem(`${label} ${itemsProcessed}/${batchSize} - ${phase}: ${embedded}/${total} chunks`);
-                    });
-                    chunksCreated += chunks.length;
-
-                    // Register on first successful insert (prevents ghost collections)
-                    if (!isRegistered) {
-                        registerCollection(registryKey);
-                        tagChatCollection(registryKey);
-                        isRegistered = true;
-                        console.log(`VectHare: Registered collection ${registryKey} after first successful insert`);
-                    }
-                }
-            } catch (itemError) {
-                // Log error but continue processing other items
-                console.warn(`VectHare: Failed to process item (hash: ${item.hash}, index: ${item.index}):`, itemError.message);
-                itemsFailed++;
-                // Don't rethrow - continue with next item
+        const insert = async (items) => {
+            await insertVectorItems(collectionId, prepareItemsForInsertion(items), settings, (embedded, total) => {
+                progressTracker.updateEmbeddingProgress(embedded, total);
+                progressTracker.updateCurrentItem(`${label}s ${embedded}/${total}`);
+            });
+            chunksCreated += items.length;
+            if (!isRegistered) {
+                // Register only after a successful insert (prevents ghost collections)
+                registerCollection(registryKey);
+                tagChatCollection(registryKey);
+                isRegistered = true;
             }
+        };
 
-            itemsProcessed++;
-            progressTracker.updateCurrentItem(`${label} ${itemsProcessed}/${batchSize}${itemsFailed > 0 ? ` (${itemsFailed} failed)` : ''}`);
+        try {
+            await insert(batch);
+        } catch (batchError) {
+            // Retry one by one so a single bad item does not block the rest.
+            console.warn(`VectHare: Batch insert failed (${batchError.message}); retrying items individually`);
+            for (const item of batch) {
+                try {
+                    await insert([item]);
+                } catch (itemError) {
+                    console.warn(`VectHare: Failed to process item (hash: ${item.hash}, index: ${item.index}):`, itemError.message);
+                    itemsFailed++;
+                }
+            }
         }
+        const itemsProcessed = batch.length;
+        const remaining = pending.length - batch.length;
 
         progressTracker.updateCurrentItem(null);
 
@@ -583,7 +570,7 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
         }
 
         return {
-            remaining: queue.size,
+            remaining,
             messagesProcessed: itemsProcessed,
             chunksCreated,
             itemsFailed

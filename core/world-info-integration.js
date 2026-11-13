@@ -10,8 +10,8 @@
  * ============================================================================
  */
 
-import { getContext } from '../../../../extensions.js';
-import { queryCollection } from './core-vector-api.js';
+import { extension_settings, getContext } from '../../../../extensions.js';
+import { queryMultipleCollections } from './core-vector-api.js';
 import {
     getCollectionMeta,
     isCollectionEnabled,
@@ -24,6 +24,14 @@ import { setExtensionPrompt, getCurrentChatId } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { buildSearchContext } from './conditional-activation.js';
 import { loadWorldInfo } from '../../../../world-info.js';
+
+/**
+ * The runtime settings object holds a snapshot of the registry array taken at
+ * startup; registry cleanup replaces that array, so read the live one.
+ */
+function liveRegistry(settings) {
+    return extension_settings?.vecthare?.vecthare_collection_registry ?? settings.vecthare_collection_registry ?? [];
+}
 
 function normalizeWorldInfoUid(uid) {
     return uid == null ? '' : String(uid).trim();
@@ -119,61 +127,72 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
     // Get all enabled lorebook collections that pass activation filters
     const lorebookCollections = await getEnabledLorebookCollections(settings, searchContext);
 
-    for (const collection of lorebookCollections) {
+    // Query every lorebook collection in one call: queryMultipleCollections
+    // embeds the query once per embedding profile instead of once per lorebook.
+    const targets = lorebookCollections.map(collection => {
+        // collection.id may be a registry key like 'backend:source:collectionId'
+        const parsed = parseRegistryKey(collection.id || collection.registryKey || '');
+        return { collection, rawCollectionId: parsed.collectionId || collection.id };
+    });
+    const rawIds = [...new Set(targets.map(t => t.rawCollectionId))];
+    let resultMap = {};
+    if (rawIds.length > 0) {
         try {
-            // collection.id may be a registry key like 'backend:source:collectionId'
-            // Parse it to extract the actual collectionId used by backends
-            const parsed = parseRegistryKey(collection.id || collection.registryKey || '');
-            const rawCollectionId = parsed.collectionId || collection.id;
-
-            // A vector hit identifies a candidate only. The live lorebook is
-            // authoritative for runtime eligibility, content, and trigger keys.
-            const liveLorebook = await loadLiveLorebook(collection.name);
-
-            // Query this lorebook collection (use raw collection ID)
-            const results = await queryCollection(rawCollectionId, query, topK, settings);
-
-            if (results && results.metadata) {
-                for (let i = 0; i < results.metadata.length; i++) {
-                    const meta = results.metadata[i];
-                    const score = meta.score || 0;
-
-                    if (score >= threshold) {
-                        const storedUid = resolveEntryUid(meta);
-                        const liveEntry = liveLorebook.entriesByUid.get(normalizeWorldInfoUid(storedUid));
-                        const liveContent = typeof liveEntry?.content === 'string' ? liveEntry.content.trim() : liveEntry?.content;
-                        const storedDisabled = meta.disabled === true || meta.metadata?.disabled === true;
-                        if ((liveLorebook.loaded && (!liveEntry || liveEntry.disable === true || !liveContent)) ||
-                            (!liveLorebook.loaded && storedDisabled)) {
-                            continue;
-                        }
-
-                        // Extract WI entry data from metadata
-                        const entry = {
-                            uid: liveEntry?.uid ?? storedUid,
-                            key: liveEntry?.key ?? meta.keywords ?? meta.entryName ?? [],
-                            content: liveEntry?.content ?? meta.text ?? '',
-                            score: score,
-                            lorebookName: collection.name,
-                            collectionId: rawCollectionId,
-                            registryKey: collection.id, // preserve registry key for metadata lookups
-                            vectorActivated: true,
-                            metadata: meta
-                        };
-
-                        semanticEntries.push(entry);
-                        // Format key for display - handle arrays of strings or objects
-                        const keyDisplay = Array.isArray(entry.key)
-                            ? entry.key.map(k => typeof k === 'object' ? (k.text || k.keyword || JSON.stringify(k)) : k).join(', ')
-                            : (entry.key || 'unknown');
-                        console.log(`VectHare: Semantic WI activation: "${keyDisplay}" (score: ${score.toFixed(3)})`);
-                    }
-                }
-            }
+            // Threshold is applied below, after keyword boosting has run.
+            resultMap = await queryMultipleCollections(rawIds, query, topK, 0, settings);
         } catch (error) {
-            console.warn(`VectHare: Failed to query lorebook collection ${collection.id}:`, error);
+            console.warn('VectHare: Failed to query lorebook collections:', error);
         }
     }
+    // A vector hit identifies a candidate only. The live lorebook is
+    // authoritative for runtime eligibility, content, and trigger keys.
+    const liveLorebooks = await Promise.all(targets.map(t => loadLiveLorebook(t.collection.name)));
+
+    targets.forEach(({ collection, rawCollectionId }, targetIndex) => {
+        const results = resultMap[rawCollectionId];
+        if (results?.error) {
+            console.warn(`VectHare: Failed to query lorebook collection ${collection.id}:`, results.error);
+            return;
+        }
+        const liveLorebook = liveLorebooks[targetIndex];
+        if (results && results.metadata) {
+            for (let i = 0; i < results.metadata.length; i++) {
+                const meta = results.metadata[i];
+                const score = meta.score || 0;
+
+                if (score >= threshold) {
+                    const storedUid = resolveEntryUid(meta);
+                    const liveEntry = liveLorebook.entriesByUid.get(normalizeWorldInfoUid(storedUid));
+                    const liveContent = typeof liveEntry?.content === 'string' ? liveEntry.content.trim() : liveEntry?.content;
+                    const storedDisabled = meta.disabled === true || meta.metadata?.disabled === true;
+                    if ((liveLorebook.loaded && (!liveEntry || liveEntry.disable === true || !liveContent)) ||
+                        (!liveLorebook.loaded && storedDisabled)) {
+                        continue;
+                    }
+
+                    // Extract WI entry data from metadata
+                    const entry = {
+                        uid: liveEntry?.uid ?? storedUid,
+                        key: liveEntry?.key ?? meta.keywords ?? meta.entryName ?? [],
+                        content: liveEntry?.content ?? meta.text ?? '',
+                        score: score,
+                        lorebookName: collection.name,
+                        collectionId: rawCollectionId,
+                        registryKey: collection.id, // preserve registry key for metadata lookups
+                        vectorActivated: true,
+                        metadata: meta
+                    };
+
+                    semanticEntries.push(entry);
+                    // Format key for display - handle arrays of strings or objects
+                    const keyDisplay = Array.isArray(entry.key)
+                        ? entry.key.map(k => typeof k === 'object' ? (k.text || k.keyword || JSON.stringify(k)) : k).join(', ')
+                        : (entry.key || 'unknown');
+                    console.log(`VectHare: Semantic WI activation: "${keyDisplay}" (score: ${score.toFixed(3)})`);
+                }
+            }
+        }
+    });
 
     // Sort by score descending
     semanticEntries.sort((a, b) => b.score - a.score);
@@ -232,7 +251,7 @@ export function normalizeActiveLorebookEntries(activeEntries) {
 async function getEnabledLorebookCollections(settings, searchContext) {
     const collections = [];
     const collectionRegistry = applyChatCollectionPolicy(
-        settings.vecthare_collection_registry || [],
+        liveRegistry(settings),
         searchContext?.currentChatId || getCurrentChatId(),
         { lorebooksOnly: true }
     );
@@ -320,7 +339,7 @@ function deduplicateWithActiveEntries(semanticEntries, activeEntries) {
  */
 export function isLorebookVectorized(lorebookName, settings) {
     const collectionId = buildLorebookCollectionId(lorebookName, 'global');
-    const collectionRegistry = settings.vecthare_collection_registry || [];
+    const collectionRegistry = liveRegistry(settings);
     return collectionRegistry.includes(collectionId);
 }
 

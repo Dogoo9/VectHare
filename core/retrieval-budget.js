@@ -12,11 +12,6 @@ export function resolveRetrievalBudgets(settings = {}) {
     return { candidateK, rerankK, finalK, candidateKMax };
 }
 
-/** Increase a candidate request geometrically without exceeding its cost cap. */
-export function nextCandidateK(current, maximum) {
-    return Math.min(maximum, Math.max(current + 1, current * 2));
-}
-
 function normalizedChunkText(chunk) {
     return String(chunk?.text ?? chunk?.metadata?.text ?? '').replace(/\s+/g, ' ').trim();
 }
@@ -67,21 +62,4 @@ export function selectFinalChunks(chunks, finalK) {
         if (selected.length >= finalK) break;
     }
     return selected;
-}
-
-/**
- * Backend-neutral adaptive refill primitive. A page is the complete top-N
- * prefix because current vector backends expose a limit rather than a cursor.
- */
-export async function collectAdaptiveCandidates(fetchPrefix, hardFilter, budgets) {
-    let requestK = budgets.candidateK;
-    let eligible = [];
-
-    while (true) {
-        const candidates = await fetchPrefix(requestK);
-        eligible = await hardFilter(candidates);
-        const exhausted = candidates.length < requestK;
-        if (eligible.length >= budgets.finalK || exhausted || requestK >= budgets.candidateKMax) return eligible;
-        requestK = nextCandidateK(requestK, budgets.candidateKMax);
-    }
 }
