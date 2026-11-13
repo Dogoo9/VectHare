@@ -17,6 +17,26 @@ const fetchMock = vi.fn(async () => ({
     text: async () => '',
 }));
 
+// One collection (with an HTML-ish name) so the browser renders a card.
+const XSS_NAME = '<img src=x onerror="window.__xss=1">';
+vi.mock('../core/collection-loader.js', async importOriginal => ({
+    ...await importOriginal(),
+    loadAllCollections: vi.fn(async () => [{
+        id: 'vecthare_chat_alice_u1',
+        registryKey: 'standard:transformers:vecthare_chat_alice_u1',
+        name: XSS_NAME,
+        backend: 'standard',
+        source: 'transformers',
+        model: '',
+        models: [],
+        chunkCount: 3,
+        scope: 'chat',
+        type: 'chat',
+        collectionType: 'chat',
+        enabled: true,
+    }]),
+}));
+
 let errors;
 
 beforeAll(() => {
@@ -84,6 +104,25 @@ describe('UI smoke test', () => {
         await openDatabaseBrowser();
         await flush();
         expect(document.querySelector('#vecthare_database_browser_modal')).not.toBeNull();
+        const card = document.querySelector('.vecthare-collection-card');
+        expect(card).not.toBeNull();
+        expect(card.querySelector('img')).toBeNull(); // name is escaped, not rendered as HTML
+        expect(card.textContent).toContain(XSS_NAME);
+
+        $('.vecthare-tab-btn[data-tab="search"]').trigger('click');
+        $('.vecthare-tab-btn[data-tab="bulk"]').trigger('click');
+        $('.vecthare-tab-btn[data-tab="collections"]').trigger('click');
+        await flush();
+
+        $('.vecthare-action-activation').first().trigger('click');
+        await flush();
+        expect($('#vecthare_activation_editor_modal').length).toBe(1);
+
+        $('.vecthare-action-rename').first().trigger('click');
+        await flush();
+        expect($('#vecthare_rename_modal').length).toBe(1);
+        expect($('#vecthare_rename_modal input').val()).toBe(XSS_NAME);
+        expect(window.__xss).toBeUndefined();
         expect(errors).toEqual([]);
     });
 
