@@ -219,29 +219,28 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+/**
+ * True for transient failures worth retrying: network errors, timeouts, rate
+ * limits and 502/503/504. Other HTTP errors (400, 401, 404, 500...) fail fast.
+ * @param {Error} error
+ * @returns {boolean}
+ */
+export function isRetryableError(error) {
+    const message = error?.message?.toLowerCase() || '';
+    // Browser network failures surface as TypeError ("Failed to fetch",
+    // "NetworkError when attempting...", "Load failed").
+    if (error?.name === 'TypeError' && /fetch|network|load failed/.test(message)) return true;
+    if (/^(failed to fetch|load failed)$/.test(message)) return true;
+    return /network ?error|timed? ?out|timeout|econnreset|econnrefused|suspended|rate limit|too many requests|\b(429|502|503|504)\b/.test(message);
+}
+
 // Retry configuration for transient failures (matches AsyncUtils.retry signature)
 const RETRY_CONFIG = {
     maxAttempts: RETRY_MAX_ATTEMPTS,
     delay: RETRY_INITIAL_DELAY_MS,
     maxDelay: RETRY_MAX_DELAY_MS,
     backoffFactor: RETRY_BACKOFF_MULTIPLIER,
-    shouldRetry: (error) => {
-        // Retry on network errors and rate limits
-        const message = error?.message?.toLowerCase() || '';
-        const isRetryable =
-            message.includes('network') ||
-            message.includes('timeout') ||
-            message.includes('failed to fetch') ||
-            message.includes('fetch') ||
-            message.includes('suspended') ||
-            message.includes('429') ||
-            message.includes('rate limit') ||
-            message.includes('too many requests') ||
-            message.includes('502') ||
-            message.includes('503') ||
-            message.includes('504');
-        return isRetryable;
-    }
+    shouldRetry: isRetryableError,
 };
 
 /**
