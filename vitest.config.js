@@ -7,6 +7,7 @@ const textgen_settingsStub = fileURLToPath(new URL('./tests/stubs/textgen-settin
 const openaiStub = fileURLToPath(new URL('./tests/stubs/openai.js', import.meta.url));
 const secretsStub = fileURLToPath(new URL('./tests/stubs/secrets.js', import.meta.url));
 const utilsStub = fileURLToPath(new URL('./tests/stubs/utils.js', import.meta.url));
+const sharedStub = fileURLToPath(new URL('./tests/stubs/shared.js', import.meta.url));
 const world_infoStub = fileURLToPath(new URL('./tests/stubs/world-info.js', import.meta.url));
 
 export default defineConfig({
@@ -19,6 +20,7 @@ export default defineConfig({
             { find: /^.*\/secrets\.js$/, replacement: secretsStub },
             { find: /^.*\/utils\.js$/, replacement: utilsStub },
             { find: /^.*\/world-info\.js$/, replacement: world_infoStub },
+            { find: /^(\.\.\/)+shared\.js$/, replacement: sharedStub },
         ],
     },
     test: {
