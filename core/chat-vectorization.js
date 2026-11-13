@@ -24,6 +24,7 @@ import { isBackendAvailable } from '../backends/backend-manager.js';
 import { applyDecayToResults, applySceneAwareDecay } from './temporal-decay.js';
 import { isChunkDisabledByScene } from './scenes.js';
 import { registerCollection, getCollectionRegistry } from './collection-loader.js';
+import { tagChatCollection } from './chat-cleanup.js';
 import {
     isCollectionEnabled,
     filterActiveCollections,
@@ -490,6 +491,8 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
 
         // Step 1: What's already vectorized? (source of truth = DB)
         const existingHashes = new Set(await getSavedHashes(collectionId, settings));
+        const registryKey = `${settings.vector_backend || 'standard'}:${settings.source || 'transformers'}:${collectionId}`;
+        if (existingHashes.size > 0) tagChatCollection(registryKey);
 
         // Step 2: Build list of messages NOT in DB
         const strategy = settings.chunking_strategy || 'per_message';
@@ -556,11 +559,8 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
 
                     // Register on first successful insert (prevents ghost collections)
                     if (!isRegistered) {
-                        // Construct proper registry key: backend:source:collectionId
-                        const backend = settings.vector_backend || 'standard';
-                        const source = settings.source || 'transformers';
-                        const registryKey = `${backend}:${source}:${collectionId}`;
                         registerCollection(registryKey);
+                        tagChatCollection(registryKey);
                         isRegistered = true;
                         console.log(`VectHare: Registered collection ${registryKey} after first successful insert`);
                     }

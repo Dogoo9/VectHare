@@ -24,8 +24,8 @@ import { debounce } from '../../../utils.js';
 import { debounce_timeout } from '../../../constants.js';
 
 // VectHare modules - Core
-import { synchronizeChat, rearrangeChat, vectorizeAll, getChatCollectionId } from './core/chat-vectorization.js';
-import { purgeVectorIndex } from './core/core-vector-api.js';
+import { synchronizeChat, rearrangeChat, vectorizeAll } from './core/chat-vectorization.js';
+import { purgeDeletedChatCollections, tagOpenChatCollections } from './core/chat-cleanup.js';
 import { getDefaultDecaySettings } from './core/temporal-decay.js';
 import { migrateOldEnabledKeys } from './core/collection-metadata.js';
 import { clearCollectionRegistry, discoverExistingCollections } from './core/collection-loader.js';
@@ -345,14 +345,14 @@ jQuery(async () => {
             );
         });
     }
-    // When a chat is deleted, purge its vectors (not full purge, just that chat)
+    // When a chat is deleted, remove the collections that were built from it
     const onChatDeleted = async (chatId) => {
         if (!chatId) return;
-        const collectionId = getChatCollectionId(chatId);
-        if (!collectionId) return;
         try {
-            await purgeVectorIndex(collectionId, settings);
-            console.log(`VectHare: Purged vectors for deleted chat: ${chatId}`);
+            const deleted = await purgeDeletedChatCollections(chatId, settings);
+            if (deleted.length > 0) {
+                console.log(`VectHare: Removed ${deleted.length} collection(s) for deleted chat: ${chatId}`);
+            }
         } catch (error) {
             console.warn(`VectHare: Failed to purge vectors for deleted chat ${chatId}:`, error);
         }
@@ -373,6 +373,7 @@ jQuery(async () => {
     eventSource.on(event_types.CHAT_CHANGED, () => {
         console.log('VectHare: Chat changed, refreshing UI state');
         refreshAutoSyncCheckbox(settings);
+        tagOpenChatCollections();
     });
 
     console.log('VectHare: ✅ Initialized successfully');
