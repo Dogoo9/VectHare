@@ -7,6 +7,9 @@ const textgen_settingsStub = fileURLToPath(new URL('./tests/stubs/textgen-settin
 const openaiStub = fileURLToPath(new URL('./tests/stubs/openai.js', import.meta.url));
 const secretsStub = fileURLToPath(new URL('./tests/stubs/secrets.js', import.meta.url));
 const utilsStub = fileURLToPath(new URL('./tests/stubs/utils.js', import.meta.url));
+const constantsStub = fileURLToPath(new URL('./tests/stubs/constants.js', import.meta.url));
+const popupStub = fileURLToPath(new URL('./tests/stubs/popup.js', import.meta.url));
+const expressionsStub = fileURLToPath(new URL('./tests/stubs/expressions.js', import.meta.url));
 const sharedStub = fileURLToPath(new URL('./tests/stubs/shared.js', import.meta.url));
 const world_infoStub = fileURLToPath(new URL('./tests/stubs/world-info.js', import.meta.url));
 
@@ -21,6 +24,9 @@ export default defineConfig({
             { find: /^.*\/utils\.js$/, replacement: utilsStub },
             { find: /^.*\/world-info\.js$/, replacement: world_infoStub },
             { find: /^(\.\.\/)+shared\.js$/, replacement: sharedStub },
+            { find: /^(\.\.\/){3,}constants\.js$/, replacement: constantsStub },
+            { find: /^(\.\.\/)+popup\.js$/, replacement: popupStub },
+            { find: /^(\.\.\/)+expressions\/index\.js$/, replacement: expressionsStub },
         ],
     },
     test: {
