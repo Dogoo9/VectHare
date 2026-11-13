@@ -1,83 +1,52 @@
 /**
  * ============================================================================
- * MILVUS BACKEND (via Unified Plugin API)
+ * MILVUS BACKEND (via Similharity plugin)
  * ============================================================================
- * Uses the Similharity plugin's unified /chunks/* endpoints.
- * Backend: Milvus (external vector database server)
- *
- * MULTITENANCY SUPPORT:
- * - Uses ONE collection ("vecthare_main") with payload filters
- * - Passes type and sourceId for data isolation
- * - Supports all VectHare features via payload metadata
- *
- * Requires either a local Milvus instance or Milvus Cloud account.
- *
- * @author VectHare
- * @version 3.0.0
+ * External Milvus server. All VectHare data lives in ONE collection
+ * ("vecthare_main"); each logical collection is a tenant addressed by
+ * { type, sourceId } payload filters.
  * ============================================================================
  */
 
-import { getRequestHeaders } from '../../../../../script.js';
-import { VectorBackend } from './backend-interface.js';
+import { SimilharityBackend, pluginRequest, modelFromSettings } from './similharity-backend.js';
 import { stripRegistryPrefix } from '../core/collection-ids.js';
-import { getModelField } from '../core/providers.js';
-import { VECTOR_LIST_LIMIT } from '../core/constants.js';
-import AsyncUtils from '../utils/async-utils.js';
 
-const BACKEND_TYPE = 'milvus';
+const MAIN_COLLECTION = 'vecthare_main';
+/** Operations whose plugin endpoint does not take tenant filters. */
+const UNFILTERED_OPS = new Set(['chunk']);
 
-/**
- * Get the model value from settings based on provider
- */
-function getModelFromSettings(settings) {
-    const locator = settings.collection_locator || settings.storageLocator;
-    if (locator) return locator.model ?? "";
-    const modelField = getModelField(settings.source);
-    return modelField ? settings[modelField] || '' : '';
-}
+export class MilvusBackend extends SimilharityBackend {
+    constructor() {
+        super('milvus', 'Milvus');
+    }
 
-export class MilvusBackend extends VectorBackend {
+    supportsHybridSearch() {
+        return true;
+    }
+
+    /** Asks the plugin for a test embedding to learn the vector dimension. */
     async _autoDetectDimensions(settings) {
         try {
-            // Don't auto-detect for sources that are handled client-side in VectHare 
-            // but missing in Similharity servers-side generation (e.g. KoboldCpp/WebLLM)
-            // Although WebLLM is client-side, we can't easily run it here without importing providers.
-            // This is a best-effort for server-side providers (OpenAI, etc.) supported by Similharity.
-            
-            console.log(`VectHare: Attempting to auto-detect embedding dimensions for ${settings.source}...`);
-            
-            const response = await fetch('/api/plugins/similharity/get-embedding', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    text: 'test',
-                    source: settings.source || 'transformers',
-                    model: getModelFromSettings(settings)
-                }),
+            const response = await pluginRequest('/get-embedding', {
+                body: { text: 'test', source: settings.source || 'transformers', model: modelFromSettings(settings) },
             });
-
             if (response.ok) {
                 const data = await response.json();
-                if (data.success && data.embedding && Array.isArray(data.embedding)) {
-                    console.log(`VectHare: Auto-detected dimension: ${data.embedding.length}`);
-                    return data.embedding.length;
-                }
+                if (data.success && Array.isArray(data.embedding)) return data.embedding.length;
             }
-        } catch (e) {
-            console.warn('VectHare: Failed to auto-detect dimensions:', e);
+        } catch (error) {
+            console.warn('VectHare: Failed to auto-detect dimensions:', error);
         }
         return null;
     }
 
     async initialize(settings) {
-        // Determine dimensions: Manual setting > Auto-detect > Default (null)
+        // Manual setting > auto-detect > plugin default
         let dimensions = settings.milvus_dimensions ? parseInt(settings.milvus_dimensions) : null;
-        
         if (!dimensions || isNaN(dimensions)) {
             dimensions = await this._autoDetectDimensions(settings);
         }
 
-        // Get Milvus config from settings
         const config = {
             host: settings.milvus_host || 'localhost',
             port: settings.milvus_port || 19530,
@@ -85,545 +54,56 @@ export class MilvusBackend extends VectorBackend {
             username: settings.milvus_username || null,
             password: settings.milvus_password || null,
             token: settings.milvus_token || null,
-            dimensions: dimensions,
+            dimensions,
         };
 
-        const response = await fetch('/api/plugins/similharity/backend/init/milvus', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(config),
-        });
-
+        const response = await pluginRequest('/backend/init/milvus', { body: config });
         if (!response.ok) {
             const errorBody = await response.text().catch(() => 'No response body');
             throw new Error(`[Milvus] Failed to initialize Milvus: ${response.status} ${response.statusText} - ${errorBody}`);
         }
-
         console.log('VectHare: Using Milvus backend (production-grade vector search)');
     }
 
-    async healthCheck() {
-        try {
-            const response = await fetch('/api/plugins/similharity/backend/health/milvus', {
-                headers: getRequestHeaders(),
-            });
-
-            if (!response.ok) return false;
-
-            const data = await response.json();
-            return data.healthy === true;
-        } catch (error) {
-            console.error('[Milvus] Health check failed:', error);
-            return false;
-        }
-    }
-
     /**
-     * Parse collection ID to extract type and sourceId for multitenancy
-     * Handles registry key format: backend:source:collectionId
-     * Extracts just the collectionId part and parses it
-     * 
-     * New format: vh:{type}:{uuid}
-     * Examples:
-     *   "vh:chat:a1b2c3d4-e5f6-7890-abcd-ef1234567890" → {type: "chat", sourceId: "a1b2..."}
-     *   "vh:lorebook:world_info_123" → {type: "lorebook", sourceId: "world_info_123"}
-     *   "vh:doc:char_456" → {type: "doc", sourceId: "char_456"}
-     * 
-     * Legacy format: vecthare_{type}_{sourceId}
+     * Parses a collection ID into its tenant { type, sourceId }.
+     * New format: vh:{type}:{sourceId}; legacy: vecthare_{type}_{sourceId}.
      */
     _parseCollectionId(collectionId) {
         if (!collectionId || typeof collectionId !== 'string') {
             return { type: 'unknown', sourceId: 'unknown' };
         }
+        const id = stripRegistryPrefix(collectionId);
 
-        // Strip registry key prefix if present (backend:source:collectionId)
-        collectionId = stripRegistryPrefix(collectionId);
-
-        // Now parse the actual collection ID
-        const idParts = collectionId.split(':');
-
-        // New format: vh:{type}:{sourceId}
+        const idParts = id.split(':');
         if (idParts.length >= 3 && idParts[0] === 'vh') {
-            return {
-                type: idParts[1],
-                sourceId: idParts.slice(2).join(':') // Handle UUIDs that might have colons
-            };
+            return { type: idParts[1], sourceId: idParts.slice(2).join(':') };
         }
 
-        // Legacy format: vecthare_{type}_{sourceId}
-        const legacyParts = collectionId.split('_');
+        const legacyParts = id.split('_');
         if (legacyParts.length >= 3 && legacyParts[0] === 'vecthare') {
-            return {
-                type: legacyParts[1],
-                sourceId: legacyParts.slice(2).join('_')
-            };
+            return { type: legacyParts[1], sourceId: legacyParts.slice(2).join('_') };
         }
 
-        // Fallback: assume it's a chat with raw ID
-        console.warn('VectHare: Unknown collection ID format:', collectionId);
-        return {
-            type: 'chat',
-            sourceId: collectionId
-        };
+        console.warn('VectHare: Unknown collection ID format:', id);
+        return { type: 'chat', sourceId: id };
     }
 
-    async getSavedHashes(collectionId, settings) {
+    _target(collectionId, _settings, op) {
+        if (UNFILTERED_OPS.has(op)) return { collectionId: MAIN_COLLECTION };
         const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/list', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main', // Always use main collection
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                limit: VECTOR_LIST_LIMIT,
-                filters: { type, sourceId }, // Filter by tenant
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to get saved hashes for ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        const data = await response.json();
-        return data.items ? data.items.map(item => item.hash) : [];
-    }
-
-    async insertVectorItems(collectionId, items, settings) {
-        if (items.length === 0) return;
-
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/insert', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                ...settings.inference_request_args,
-                collectionId: 'vecthare_main', // Always use main collection
-                items: items.map(item => ({
-                    hash: item.hash,
-                    text: item.text,
-                    index: item.index,
-                    vector: item.vector,
-                    metadata: {
-                        ...item.metadata,
-                        // Pass through VectHare-specific fields
-                        importance: item.importance ?? item.metadata?.importance,
-                        keywords: item.keywords ?? item.metadata?.keywords,
-                        customWeights: item.customWeights ?? item.metadata?.customWeights,
-                        disabledKeywords: item.disabledKeywords ?? item.metadata?.disabledKeywords,
-                        chunkGroup: item.chunkGroup ?? item.metadata?.chunkGroup,
-                        conditions: item.conditions ?? item.metadata?.conditions,
-                        summary: item.summary ?? item.metadata?.summary,
-                        isSummaryChunk: item.isSummaryChunk ?? item.metadata?.isSummaryChunk,
-                        parentHash: item.parentHash ?? item.metadata?.parentHash,
-                    }
-                })),
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId }, // Pass multitenancy info
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to insert ${items.length} vectors into ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        console.log(`VectHare Milvus: Inserted ${items.length} vectors (type: ${type}, sourceId: ${sourceId})`);
-    }
-
-    async deleteVectorItems(collectionId, hashes, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
-                hashes: hashes,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to delete vectors from ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-    }
-
-    async queryCollection(collectionId, searchText, topK, settings, queryVector = null) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/query', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                ...settings.inference_request_args,
-                collectionId: 'vecthare_main',
-                searchText: searchText,
-                ...(queryVector ? { queryVector } : {}),
-                topK: topK,
-                threshold: 0.0,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to query collection ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        const data = await response.json();
-
-        // Format results to match expected output
-        const hashes = data.results.map(r => r.hash);
-        const metadata = data.results.map(r => ({
-            hash: r.hash,
-            text: r.text,
-            score: r.score,
-            ...r.metadata,
-        }));
-
-        return { hashes, metadata };
-    }
-
-    async queryMultipleCollections(collectionIds, searchText, topK, threshold, settings, queryVector = null) {
-        const results = {};
-
-        const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
-        await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
-            try {
-                const { type, sourceId } = this._parseCollectionId(collectionId);
-
-                const response = await fetch('/api/plugins/similharity/chunks/query', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        backend: BACKEND_TYPE,
-                        ...settings.inference_request_args,
-                        collectionId: 'vecthare_main',
-                        searchText: searchText,
-                        topK: topK,
-                        threshold: threshold,
-                        source: settings.source || 'transformers',
-                        model: getModelFromSettings(settings),
-                        ...(queryVector ? { queryVector } : {}),
-                        filters: { type, sourceId },
-                    }),
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    const resultArray = data.results || data.chunks || [];
-
-                    results[collectionId] = {
-                        hashes: resultArray.map(r => r.hash),
-                        metadata: resultArray.map(r => ({
-                            hash: r.hash,
-                            text: r.text,
-                            score: r.score,
-                            ...r.metadata,
-                        })),
-                    };
-                } else {
-                    console.error(`VectHare: Query failed for ${collectionId}: ${response.status} ${response.statusText}`);
-                    results[collectionId] = { hashes: [], metadata: [] };
-                }
-            } catch (error) {
-                console.error(`Failed to query collection ${collectionId}:`, error);
-                results[collectionId] = { hashes: [], metadata: [] };
-            }
-        }), concurrency);
-
-        return results;
-    }
-
-    async purgeVectorIndex(collectionId, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/purge', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId }, // Purge specific tenant
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to purge collection ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        console.log(`VectHare Milvus: Purged (type: ${type}, sourceId: ${sourceId})`);
-    }
-
-    async purgeFileVectorIndex(collectionId, settings) {
-        return this.purgeVectorIndex(collectionId, settings);
+        return { collectionId: MAIN_COLLECTION, filters: { type, sourceId } };
     }
 
     async purgeAllVectorIndexes(settings) {
-        // Purge the entire main collection
-        const response = await fetch('/api/plugins/similharity/chunks/purge', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
+        const response = await pluginRequest('/chunks/purge', {
+            body: {
+                backend: this.type,
+                collectionId: MAIN_COLLECTION,
                 source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                // No filters = purge everything
-            }),
+                model: modelFromSettings(settings),
+            },
         });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to purge all collections: ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-    }
-
-    // ========================================================================
-    // EXTENDED API METHODS (for UI components)
-    // ========================================================================
-
-    /**
-     * Get a single chunk by hash
-     */
-    async getChunk(collectionId, hash, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}?` + new URLSearchParams({
-            backend: BACKEND_TYPE,
-            collectionId: 'vecthare_main',
-            source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-        }), {
-            headers: getRequestHeaders(),
-        });
-
-        if (!response.ok) {
-            if (response.status === 404) return null;
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to get chunk ${hash} from ${collectionId}: ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        const data = await response.json();
-        return data.chunk;
-    }
-
-    /**
-     * List chunks with pagination
-     */
-    async listChunks(collectionId, settings, options = {}) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/list', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                offset: options.offset || 0,
-                limit: options.limit || 100,
-                includeVectors: options.includeVectors || false,
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to list chunks in ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        return await response.json();
-    }
-
-    /**
-     * Update chunk text (triggers re-embedding)
-     */
-    async updateChunkText(collectionId, hash, newText, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/text`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                ...settings.inference_request_args,
-                collectionId: 'vecthare_main',
-                text: newText,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to update chunk text in ${collectionId} (hash: ${hash}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        return await response.json();
-    }
-
-    /**
-     * Update chunk metadata (no re-embedding)
-     */
-    async updateChunkMetadata(collectionId, hash, metadata, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/metadata`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
-                metadata: metadata,
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to update chunk metadata in ${collectionId} (hash: ${hash}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        return await response.json();
-    }
-
-    /**
-     * Get collection statistics
-     */
-    async getStats(collectionId, settings) {
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const response = await fetch('/api/plugins/similharity/chunks/stats', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                backend: BACKEND_TYPE,
-                collectionId: 'vecthare_main',
-                source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-                filters: { type, sourceId },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => 'No response body');
-            throw new Error(`[Milvus] Failed to get stats for ${collectionId} (type: ${type}, sourceId: ${sourceId}): ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-
-        const data = await response.json();
-        return data.stats;
-    }
-
-    // ========================================================================
-    // HYBRID SEARCH METHODS
-    // ========================================================================
-
-    /**
-     * Check if this backend supports native hybrid search.
-     * Milvus supports hybrid search via the Similharity plugin.
-     * @returns {boolean}
-     */
-    supportsHybridSearch() {
-        return true;
-    }
-
-    /**
-     * Perform hybrid search using Milvus's hybrid capabilities.
-     * Falls back to regular vector search if hybrid endpoint is unavailable.
-     *
-     * @param {string} collectionId - Collection to query
-     * @param {string} searchText - Query text
-     * @param {number} topK - Number of results to return
-     * @param {object} settings - VectHare settings
-     * @param {object} hybridOptions - Hybrid search options
-     * @returns {Promise<{hashes: number[], metadata: object[]}>}
-     */
-    async hybridQuery(collectionId, searchText, topK, settings, hybridOptions = {}) {
-        const {
-            vectorWeight = 0.5,
-            textWeight = 0.5,
-            fusionMethod = 'rrf',
-            rrfK = 60
-        } = hybridOptions;
-
-        const { type, sourceId } = this._parseCollectionId(collectionId);
-
-        const body = {
-            backend: BACKEND_TYPE,
-            ...settings.inference_request_args,
-            collectionId: 'vecthare_main',
-            searchText: searchText,
-            topK: topK,
-            threshold: 0.0,
-            source: settings.source || 'transformers',
-            model: getModelFromSettings(settings),
-            filters: { type, sourceId },
-            // Hybrid-specific parameters
-            hybrid: true,
-            hybridOptions: {
-                vectorWeight,
-                textWeight,
-                fusionMethod,
-                rrfK
-            }
-        };
-
-        try {
-            // Try the hybrid endpoint first
-            const response = await fetch('/api/plugins/similharity/chunks/hybrid-query', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify(body),
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log(`[Milvus] Native hybrid search returned ${data.results?.length || 0} results`);
-
-                return {
-                    hashes: data.results.map(r => r.hash),
-                    metadata: data.results.map(r => ({
-                        hash: r.hash,
-                        text: r.text,
-                        score: r.score,
-                        vectorScore: r.vectorScore,
-                        textScore: r.textScore,
-                        fusionMethod: fusionMethod,
-                        hybridSearch: true,
-                        ...r.metadata,
-                    }))
-                };
-            }
-
-            // If hybrid endpoint returns 404 or similar, fall back
-            console.warn(`[Milvus] Hybrid endpoint not available (${response.status}), falling back to vector-only search`);
-        } catch (error) {
-            console.warn(`[Milvus] Hybrid search failed:`, error.message);
-        }
-
-        // Fallback to regular vector search
-        return this.queryCollection(collectionId, searchText, topK, settings);
+        await this._throwIfFailed(response, 'purge all collections');
     }
 }

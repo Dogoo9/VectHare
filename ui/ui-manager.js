@@ -25,6 +25,7 @@ import { doesChatHaveVectors } from '../core/collection-loader.js';
 import { getModelField } from '../core/providers.js';
 import { getChunkingStrategies } from '../core/content-types.js';
 import { getAlternativeEndpointHtml, bindAlternativeEndpointControls } from './endpoint-presets.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 /**
  * Applies the current settings snapshot without overwriting collection metadata
@@ -3514,11 +3515,7 @@ async function showQdrantDimensionFixDialog() {
             toastr.info('Purging Qdrant collection...');
             try {
                 const { getRequestHeaders } = await import('../../../../../script.js');
-                const response = await fetch('/api/plugins/similharity/backend/qdrant/purge-collection', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({ collectionName: 'vecthare_main' })
-                });
+                const response = await pluginRequest('/backend/qdrant/purge-collection', { body: { collectionName: 'vecthare_main' } });
 
                 if (response.ok) {
                     toastr.success('Qdrant collection purged! You can now re-vectorize your content.');

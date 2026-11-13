@@ -37,6 +37,7 @@ import { initializeVisualizer } from './ui/chunk-visualizer.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';
 import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
+import { pluginRequest } from './backends/similharity-backend.js';
 
 // VectHare modules - Cotton-Tales Integration
 import './core/emotion-classifier.js'; // Exposes window.VectHareEmotionClassifier
@@ -200,13 +201,10 @@ async function onPurgeClick() {
     }
 
     try {
-        const { getRequestHeaders, saveSettingsDebounced } = await import('../../../../script.js');
+        const { saveSettingsDebounced } = await import('../../../../script.js');
 
         // 1. Delete entire vectors folder (requires the Similharity plugin)
-        const response = await fetch('/api/plugins/similharity/purge-all', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
+        const response = await pluginRequest('/purge-all', { method: 'POST' });
         if (!response.ok) {
             throw new Error(`Server returned ${response.status} ${response.statusText}. Is the Similharity plugin installed?`);
         }

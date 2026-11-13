@@ -18,7 +18,7 @@
  */
 
 import { extension_settings } from '../../../../extensions.js';
-import { getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { saveSettingsDebounced } from '../../../../../script.js';
 import { getSavedHashes, insertVectorItems } from './core-vector-api.js';
 import {
     getCollectionMeta,
@@ -36,6 +36,7 @@ import { collectionMutation, physicalCollectionId, resolveCollectionSettings } f
 import { parseRegistryKey } from './collection-ids.js';
 import { getModelField } from './providers.js';
 import { compareEmbeddingFingerprints, compareEmbeddingProbes, storageSettings } from './collection-portability.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 // ============================================================================
 // CONSTANTS
@@ -407,10 +408,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
     return collectionMutation(collectionId, settings, async () => {
     settings = storageSettings(settings);
     const backendName = settings.vector_backend || 'standard';
-    const response = await fetch('/api/plugins/similharity/chunks/insert', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
+    const response = await pluginRequest('/chunks/insert', { body: {
             backend: backendName === 'standard' ? 'vectra' : backendName,
             collectionId: collectionId,
             source: settings.source || 'transformers',
@@ -422,8 +420,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
                 vector: c.vector, // Pre-computed vector!
                 metadata: c.metadata || {},
             })),
-        }),
-    });
+        } });
 
     if (!response.ok) {
         const error = await response.text();
@@ -442,7 +439,7 @@ async function reserveImportTarget(collectionId, settings, options) {
     if (Object.keys(extension_settings.vecthare?.collections || {}).some(k => parseRegistryKey(k).collectionId === collectionId) || getCollectionRegistry().some(k => parseRegistryKey(k).collectionId === collectionId)) {
         throw new Error('Import target already exists. Choose a new ID; the original was not modified.');
     }
-    const response = await fetch('/api/plugins/similharity/collections', { headers: getRequestHeaders() });
+    const response = await pluginRequest('/collections');
     if (!response.ok) throw new Error('Safe import requires Similharity collection discovery to check for collisions.');
     const data = await response.json();
     if (!data.success || !Array.isArray(data.collections)) throw new Error('Cannot verify that the import target is unused.');

@@ -21,7 +21,7 @@ import {
 import {
     queryMultipleCollections,
 } from "../core/core-vector-api.js";
-import { getRequestHeaders, getCurrentChatId, eventSource, event_types } from "../../../../../script.js";
+import { getCurrentChatId, eventSource, event_types } from "../../../../../script.js";
 import {
     cleanupOrphanedMeta,
     getCollectionConditions,
@@ -73,6 +73,7 @@ import {
     convertToPNG,
 } from "../core/png-export.js";
 import { escapeHtml } from "../utils/html.js";
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 // Plugin availability cache
 let pluginAvailable = null;
@@ -85,10 +86,7 @@ async function checkPluginAvailable() {
   if (pluginAvailable !== null) return pluginAvailable;
 
   try {
-    const response = await fetch("/api/plugins/similharity/health", {
-      method: "GET",
-      headers: getRequestHeaders(),
-    });
+    const response = await pluginRequest('/health');
     pluginAvailable = response.ok;
   } catch {
     pluginAvailable = false;
@@ -1128,15 +1126,11 @@ function bindCollectionCardEvents() {
       if (!collection) return;
 
       try {
-        const response = await fetch("/api/plugins/similharity/open-folder", {
-          method: "POST",
-          headers: getRequestHeaders(),
-          body: JSON.stringify({
+        const response = await pluginRequest('/open-folder', { body: {
             collectionId: collection.id,
             backend: collection.backend,
             source: collection.source,
-          }),
-        });
+          } });
 
         if (!response.ok) {
           throw new Error(`Failed to open folder: ${response.statusText}`);
@@ -1191,11 +1185,7 @@ function bindCollectionCardEvents() {
 
         console.log("VectHare DB Browser: Requesting chunks with:", requestBody);
 
-        const response = await fetch("/api/plugins/similharity/chunks/list", {
-          method: "POST",
-          headers: getRequestHeaders(),
-          body: JSON.stringify(requestBody),
-        });
+        const response = await pluginRequest('/chunks/list', { body: requestBody });
 
         if (!response.ok) {
           throw new Error(`Failed to list chunks: ${response.statusText}`);
@@ -2988,17 +2978,13 @@ async function scanKeywords() {
 
     for (const collection of collectionsToScan) {
       try {
-        const response = await fetch("/api/plugins/similharity/chunks/list", {
-          method: "POST",
-          headers: getRequestHeaders(),
-          body: JSON.stringify({
+        const response = await pluginRequest('/chunks/list', { body: {
             backend: collection.backend || "vectra",
             collectionId: collection.id,
             source: collection.source || "transformers",
             model: collection.model || "",
             limit: 500,
-          }),
-        });
+          } });
 
         if (!response.ok) continue;
 
@@ -3388,17 +3374,13 @@ function renderSearchResults(results, query, originalResults = null) {
         };
 
         // Use unified plugin endpoint
-        const response = await fetch("/api/plugins/similharity/chunks/list", {
-          method: "POST",
-          headers: getRequestHeaders(),
-          body: JSON.stringify({
+        const response = await pluginRequest('/chunks/list', { body: {
             backend: collection.backend || "vectra",
             collectionId: collection.id,
             source: collection.source || "transformers",
             model: collection.model || "",
             limit: 1000, // Get first 1000 chunks
-          }),
-        });
+          } });
 
         if (!response.ok) {
           throw new Error(`Failed to list chunks: ${response.statusText}`);

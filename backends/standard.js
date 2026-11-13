@@ -14,22 +14,13 @@
 
 import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
-import { getModelField } from '../core/providers.js';
+import '../core/providers.js'; // side effects only
 import { extension_settings } from '../../../../extensions.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { oai_settings } from '../../../../openai.js';
 import { secret_state } from '../../../../secrets.js';
 import AsyncUtils from '../utils/async-utils.js';
-
-/**
- * Get the model value from settings based on provider
- */
-function getModelFromSettings(settings) {
-    const locator = settings.collection_locator || settings.storageLocator;
-    if (locator) return locator.model ?? "";
-    const modelField = getModelField(settings.source);
-    return modelField ? settings[modelField] || '' : '';
-}
+import { pluginRequest, modelFromSettings } from './similharity-backend.js';
 
 /**
  * Build provider-specific parameters for API requests.
@@ -111,15 +102,12 @@ export class StandardBackend extends VectorBackend {
         // Check if plugin is available
         console.debug('VectHare: Checking plugin availability...');
         try {
-            const response = await fetch('/api/plugins/similharity/health');
+            const response = await pluginRequest('/health');
             console.debug('VectHare: Plugin health check response:', response.status, response.ok);
             this.pluginAvailable = response.ok;
 
             if (this.pluginAvailable) {
-                await fetch('/api/plugins/similharity/backend/init/vectra', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                });
+                await pluginRequest('/backend/init/vectra', { method: 'POST' });
                 console.log('VectHare: Standard backend initialized (plugin available)');
             } else {
                 console.log('VectHare: Standard backend initialized (native ST API only - health check failed)');
@@ -157,7 +145,7 @@ export class StandardBackend extends VectorBackend {
      */
     async getSavedHashes(collectionId, settings) {
         const providerParams = getProviderSpecificParams(settings, false);
-        const model = getModelFromSettings(settings);
+        const model = modelFromSettings(settings);
 
         const response = await fetch('/api/vector/list', {
             method: 'POST',
@@ -191,7 +179,7 @@ export class StandardBackend extends VectorBackend {
 
         if (items.some(i => i.vector) && !this.pluginAvailable && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, false);
-        const model = getModelFromSettings(settings);
+        const model = modelFromSettings(settings);
 
         // Log chunk statistics for debugging OOM issues
         const textLengths = items.map(item => (item.text || '').length);
@@ -332,11 +320,8 @@ export class StandardBackend extends VectorBackend {
      */
     async queryCollection(collectionId, searchText, topK, settings, queryVector = null) {
         if (queryVector && this.pluginAvailable) {
-            const response = await fetch('/api/plugins/similharity/chunks/query', {
-                method: 'POST', headers: getRequestHeaders(),
-                body: JSON.stringify({ backend: 'vectra', collectionId, queryVector, topK,
-                    threshold: settings.score_threshold || 0, source: settings.source || 'transformers', model: getModelFromSettings(settings) }),
-            });
+            const response = await pluginRequest('/chunks/query', { body: { backend: 'vectra', collectionId, queryVector, topK,
+                    threshold: settings.score_threshold || 0, source: settings.source || 'transformers', model: modelFromSettings(settings) } });
             if (!response.ok) throw new Error(`Precomputed vector query failed: HTTP ${response.status}`);
             const data = await response.json();
             if (!data.success || !Array.isArray(data.results)) throw new Error('Invalid precomputed vector query response.');
@@ -344,7 +329,7 @@ export class StandardBackend extends VectorBackend {
         }
         if (queryVector && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, true);
-        const model = getModelFromSettings(settings);
+        const model = modelFromSettings(settings);
 
         const requestBody = {
             collectionId: collectionId,
@@ -398,7 +383,7 @@ export class StandardBackend extends VectorBackend {
         }
         if (queryVector && !['webllm', 'koboldcpp'].includes(settings.source)) throw new Error('This native namespace does not accept precomputed vectors. Similharity is required.');
         const providerParams = getProviderSpecificParams(settings, true);
-        const model = getModelFromSettings(settings);
+        const model = modelFromSettings(settings);
 
         const requestBody = {
             collectionIds: collectionIds,
@@ -450,10 +435,7 @@ export class StandardBackend extends VectorBackend {
      */
     async purgeVectorIndex(collectionId, settings) {
         if (this.pluginAvailable) {
-            const response = await fetch('/api/plugins/similharity/chunks/purge', {
-                method: 'POST', headers: getRequestHeaders(),
-                body: JSON.stringify({ backend: 'vectra', collectionId, source: settings.source || 'transformers', model: getModelFromSettings(settings) }),
-            });
+            const response = await pluginRequest('/chunks/purge', { body: { backend: 'vectra', collectionId, source: settings.source || 'transformers', model: modelFromSettings(settings) } });
             if (!response.ok) throw new Error(`Failed to purge collection: HTTP ${response.status}`);
             return;
         }
@@ -492,19 +474,15 @@ export class StandardBackend extends VectorBackend {
     async listChunks(collectionId, settings, options = {}) {
         if (this.pluginAvailable) {
             try {
-                const response = await fetch('/api/plugins/similharity/chunks/list', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
+                const response = await pluginRequest('/chunks/list', { body: {
                         backend: 'vectra',
                         collectionId: collectionId,
                         source: settings.source || 'transformers',
-                        model: getModelFromSettings(settings),
+                        model: modelFromSettings(settings),
                         offset: options.offset || 0,
                         limit: options.limit || 100,
                         includeVectors: options.includeVectors || false,
-                    }),
-                });
+                    } });
 
                 if (response.ok) {
                     return await response.json();
@@ -534,7 +512,7 @@ export class StandardBackend extends VectorBackend {
                 backend: 'vectra',
                 collectionId: collectionId,
                 source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
+                model: modelFromSettings(settings),
             }), {
                 headers: getRequestHeaders(),
             });
@@ -558,17 +536,13 @@ export class StandardBackend extends VectorBackend {
             throw new Error('Chunk text editing requires the Similharity plugin');
         }
 
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/text`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest(`/chunks/${encodeURIComponent(hash)}/text`, { method: 'PATCH', body: {
                 backend: 'vectra',
                 collectionId: collectionId,
                 text: newText,
                 source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }),
-        });
+                model: modelFromSettings(settings),
+            } });
 
         if (!response.ok) {
             const errorBody = await response.text().catch(() => 'No response body');
@@ -586,17 +560,13 @@ export class StandardBackend extends VectorBackend {
             throw new Error('Chunk metadata editing requires the Similharity plugin');
         }
 
-        const response = await fetch(`/api/plugins/similharity/chunks/${encodeURIComponent(hash)}/metadata`, {
-            method: 'PATCH',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest(`/chunks/${encodeURIComponent(hash)}/metadata`, { method: 'PATCH', body: {
                 backend: 'vectra',
                 collectionId: collectionId,
                 metadata: metadata,
                 source: settings.source || 'transformers',
-                model: getModelFromSettings(settings),
-            }),
-        });
+                model: modelFromSettings(settings),
+            } });
 
         if (!response.ok) {
             const errorBody = await response.text().catch(() => 'No response body');
@@ -613,16 +583,12 @@ export class StandardBackend extends VectorBackend {
     async getStats(collectionId, settings) {
         if (this.pluginAvailable) {
             try {
-                const response = await fetch('/api/plugins/similharity/chunks/stats', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
+                const response = await pluginRequest('/chunks/stats', { body: {
                         backend: 'vectra',
                         collectionId: collectionId,
                         source: settings.source || 'transformers',
-                        model: getModelFromSettings(settings),
-                    }),
-                });
+                        model: modelFromSettings(settings),
+                    } });
 
                 if (response.ok) {
                     const data = await response.json();
@@ -648,9 +614,7 @@ export class StandardBackend extends VectorBackend {
     async discoverCollections(settings) {
         if (this.pluginAvailable) {
             try {
-                const response = await fetch('/api/plugins/similharity/collections', {
-                    headers: getRequestHeaders(),
-                });
+                const response = await pluginRequest('/collections');
 
                 if (response.ok) {
                     const data = await response.json();

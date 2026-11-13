@@ -37,7 +37,7 @@ import { getChunkMetadata, getCollectionMeta } from './collection-metadata.js';
 import { processChunkGroups, mergeVirtualLinks } from './chunk-groups.js';
 import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '../ui/search-debug.js';
 import { LRUCache } from '../utils/data-structures.js';
-import { getRequestHeaders } from '../../../../../script.js';
+import '../../../../../script.js'; // side effects only
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
 import { resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
 import { fuseCollectionResults } from './collection-fusion.js';
@@ -51,6 +51,7 @@ import {
     parseCollectionId,
     parseRegistryKey,
 } from './collection-ids.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 // Hash cache for performance
 const hashCache = new LRUCache(HASH_CACHE_SIZE);
@@ -395,17 +396,13 @@ async function rerankWithBananaBread(query, chunks, settings) {
     const documents = chunks.map(c => c.text);
 
     try {
-        const response = await fetch('/api/plugins/similharity/rerank', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest('/rerank', { body: {
                 apiUrl,
                 apiKey: settings.bananabread_api_key || '', // Include API key for authentication
                 query,
                 documents,
                 top_k: chunks.length
-            }),
-        });
+            } });
 
         if (!response.ok) {
             console.warn('VectHare: Reranking failed, using original scores');

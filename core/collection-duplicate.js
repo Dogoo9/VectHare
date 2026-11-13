@@ -1,5 +1,5 @@
 import { extension_settings } from '../../../../extensions.js';
-import { getRequestHeaders } from '../../../../../script.js';
+import '../../../../../script.js'; // side effects only
 import { getBackend } from '../backends/backend-manager.js';
 import { getCollectionMeta, setCollectionMeta, getChunkMetadata } from './collection-metadata.js';
 import { getCollectionRegistry, registerCollection } from './collection-loader.js';
@@ -8,6 +8,7 @@ import { collectionStorageKey, storageSettings } from './collection-portability.
 import { parseRegistryKey } from './collection-ids.js';
 import { readMigrationItems, verifyMigrationContent } from './embedding-migration.js';
 import { indexLexicalItems } from './lexical-index.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 const pendingNames = new Set();
 const normalizeBackend = backend => backend === 'vectra' ? 'standard' : backend;
@@ -68,7 +69,7 @@ export async function duplicateCollection(key, name, settings, { targetBackend, 
         if (targetBackend === 'standard' && !backend.pluginAvailable) {
             throw new Error('Similharity is required to copy and verify stored vectors and metadata in Standard storage.');
         }
-        const response = await fetch('/api/plugins/similharity/collections', { headers: getRequestHeaders() });
+        const response = await pluginRequest('/collections');
         if (!response.ok) throw new Error('Similharity collection discovery is required to check the destination name.');
         const data = await response.json();
         if (!Array.isArray(data.collections) || data.success === false) throw new Error('Cannot verify that the destination name is unused.');

@@ -11,7 +11,7 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { getContext } from '../../../../extensions.js';
-import { characters, substituteParams, getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { characters, substituteParams, saveSettingsDebounced } from '../../../../../script.js';
 import { getSavedHashes } from './core-vector-api.js';
 import { getStringHash } from '../../../../utils.js';
 import {
@@ -37,6 +37,7 @@ import {
     parseRegistryKey,
     COLLECTION_PREFIXES,
 } from './collection-ids.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 // Plugin detection state
 let pluginAvailable = null;
@@ -317,10 +318,7 @@ async function checkPluginAvailable() {
     }
 
     try {
-        const response = await fetch('/api/plugins/similharity/health', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const response = await pluginRequest('/health');
 
         if (response.ok) {
             const data = await response.json();
@@ -349,10 +347,7 @@ async function discoverViaPlugin(settings) {
         console.debug('🔍 VectHare: Requesting collection discovery from plugin...');
 
         // Plugin now scans ALL sources, not just the current one
-        const response = await fetch(`/api/plugins/similharity/collections`, {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const response = await pluginRequest(`/collections`);
 
         if (!response.ok) {
             console.warn(`⚠️ VectHare: Plugin collections endpoint failed (status: ${response.status})`);
