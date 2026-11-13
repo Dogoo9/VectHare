@@ -11,25 +11,21 @@
  */
 
 import {
-    CONTENT_TYPES,
-    CHUNKING_STRATEGIES,
     getContentType,
     getAllContentTypes,
     getChunkingStrategies,
     getChunkingStrategy,
-    strategyNeedsSize,
-    strategyNeedsOverlap,
     getContentTypeDefaults,
     hasFeature,
-    SCOPE_OPTIONS,
     CHARACTER_FIELDS,
 } from '../core/content-types.js';
-import { extension_settings, getContext } from '../../../../extensions.js';
+import { getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { getChatUUID } from '../core/chat-vectorization.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../popup.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { checkWikiPlugin, scrapeWikiPages } from '../core/wiki-import.js';
+import { escapeHtml } from '../utils/html.js';
 
 // ============================================================================
 // STATE
@@ -2484,11 +2480,6 @@ async function startVectorization() {
 /**
  * Escapes HTML entities
  */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // ============================================================================
 // TEXT CLEANING MANAGEMENT

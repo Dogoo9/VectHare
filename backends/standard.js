@@ -15,7 +15,6 @@
 import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
 import { getModelField } from '../core/providers.js';
-import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import { extension_settings } from '../../../../extensions.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { oai_settings } from '../../../../openai.js';
@@ -110,10 +109,10 @@ export class StandardBackend extends VectorBackend {
 
     async initialize(settings) {
         // Check if plugin is available
-        console.log('VectHare DEBUG: Checking plugin availability...');
+        console.debug('VectHare: Checking plugin availability...');
         try {
             const response = await fetch('/api/plugins/similharity/health');
-            console.log('VectHare DEBUG: Plugin health check response:', response.status, response.ok);
+            console.debug('VectHare: Plugin health check response:', response.status, response.ok);
             this.pluginAvailable = response.ok;
 
             if (this.pluginAvailable) {
@@ -208,7 +207,7 @@ export class StandardBackend extends VectorBackend {
         // Debug: Log first chunk's keywords if any
         if (chunksWithKeywords > 0) {
             const firstChunkWithKeywords = items.find(item => item.keywords && item.keywords.length > 0);
-            console.log(`VectHare DEBUG: First chunk keywords:`, firstChunkWithKeywords.keywords);
+            console.debug(`VectHare: First chunk keywords:`, firstChunkWithKeywords.keywords);
         }
 
         // Warn if chunks are unusually large (potential OOM risk)
@@ -219,11 +218,11 @@ export class StandardBackend extends VectorBackend {
 
         try {
             // Try plugin API first (supports metadata) - fallback to native API if unavailable
-            console.log('VectHare DEBUG: this.pluginAvailable =', this.pluginAvailable);
+            console.debug('VectHare: this.pluginAvailable =', this.pluginAvailable);
             let usePluginApi = this.pluginAvailable;
             let endpoint = usePluginApi ? '/api/plugins/similharity/chunks/insert' : '/api/vector/insert';
 
-            console.log(`VectHare DEBUG: Using ${usePluginApi ? 'PLUGIN' : 'NATIVE'} API for insertion (${endpoint})`);
+            console.debug(`VectHare: Using ${usePluginApi ? 'PLUGIN' : 'NATIVE'} API for insertion (${endpoint})`);
             
             // Warn if keywords will be lost
             if (!usePluginApi && chunksWithKeywords > 0) {
@@ -255,7 +254,7 @@ export class StandardBackend extends VectorBackend {
                     };
                     // Debug: Log first item's metadata
                     if (item === items[0] && item.keywords?.length > 0) {
-                        console.log(`VectHare DEBUG: First item metadata being sent:`, mappedItem.metadata);
+                        console.debug(`VectHare: First item metadata being sent:`, mappedItem.metadata);
                     }
                     return mappedItem;
                 }),

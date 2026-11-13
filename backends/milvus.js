@@ -19,6 +19,7 @@
 
 import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
+import { stripRegistryPrefix } from '../core/collection-ids.js';
 import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import AsyncUtils from '../utils/async-utils.js';
@@ -136,22 +137,7 @@ export class MilvusBackend extends VectorBackend {
         }
 
         // Strip registry key prefix if present (backend:source:collectionId)
-        const knownBackends = ['standard', 'lancedb', 'vectra', 'milvus', 'qdrant'];
-        const knownSources = ['transformers', 'openai', 'cohere', 'ollama', 'llamacpp',
-            'vllm', 'koboldcpp', 'webllm', 'bananabread', 'openrouter'];
-        
-        const parts = collectionId.split(':');
-        
-        // Check if it starts with backend:source: prefix
-        if (parts.length >= 3 && knownBackends.includes(parts[0]) && knownSources.includes(parts[1])) {
-            // Strip the backend:source: prefix and work with just the collection ID
-            collectionId = parts.slice(2).join(':');
-        }
-        // Check if it starts with source: prefix (old format)
-        else if (parts.length >= 2 && knownSources.includes(parts[0])) {
-            // Strip the source: prefix
-            collectionId = parts.slice(1).join(':');
-        }
+        collectionId = stripRegistryPrefix(collectionId);
 
         // Now parse the actual collection ID
         const idParts = collectionId.split(':');

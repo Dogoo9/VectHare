@@ -10,7 +10,7 @@
  * ============================================================================
  */
 
-import { extension_settings, getContext } from '../../../../extensions.js';
+import { getContext } from '../../../../extensions.js';
 import { queryCollection } from './core-vector-api.js';
 import {
     getCollectionMeta,

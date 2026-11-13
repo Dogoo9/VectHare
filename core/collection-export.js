@@ -25,7 +25,6 @@ import {
     setCollectionMeta,
     getChunkMetadata,
     saveChunkMetadata,
-    getAllChunkMetadata,
 } from './collection-metadata.js';
 import {
     registerCollection,

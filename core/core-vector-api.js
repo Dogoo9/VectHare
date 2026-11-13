@@ -36,7 +36,6 @@ import {
     getSecretKey,
     requiresApiKey,
     requiresUrl,
-    getUrlProviders
 } from './providers.js';
 import { applyKeywordBoosts, getOverfetchAmount } from './keyword-boost.js';
 import { applyBM25Scoring } from './bm25-scorer.js';
@@ -50,13 +49,11 @@ import { completeLexicalCoverage } from './lexical-index.js';
 import AsyncUtils from '../utils/async-utils.js';
 import StringUtils from '../utils/string-utils.js';
 import {
-    RATE_LIMIT_CALLS,
-    RATE_LIMIT_WINDOW_MS,
     API_TIMEOUT_MS,
     RETRY_MAX_ATTEMPTS,
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
-    RETRY_BACKOFF_MULTIPLIER
+    RETRY_BACKOFF_MULTIPLIER,
 } from './constants.js';
 
 // Get shared WebLLM provider singleton (lazy-initialized)
@@ -793,18 +790,13 @@ async function queryCollectionResolved(collectionId, searchText, topK, settings)
     // If source requires client-side embeddings, generate query vector
     if (usesClientEmbeddings(settings)) {
         const queryItem = [searchText];
-        try {
-            const additionalArgs = await getAdditionalArgs(queryItem, settings, null, 'query');
-            // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
-            if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
-                queryVector = additionalArgs.embeddings[searchText];
-            } else {
-                // A failed client embedding must not contact another inference provider.
-                throw new Error('Client embedding returned no query vector.');
-            }
-        } catch (clientEmbedError) {
-            // Propagate local failures without server or cloud fallback.
-            throw clientEmbedError;
+        const additionalArgs = await getAdditionalArgs(queryItem, settings, null, 'query');
+        // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
+        if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
+            queryVector = additionalArgs.embeddings[searchText];
+        } else {
+            // A failed client embedding must not contact another inference provider.
+            throw new Error('Client embedding returned no query vector.');
         }
     }
 
@@ -947,19 +939,14 @@ async function queryMultipleCollectionsResolved(collectionIds, searchText, topK,
     // Generate query vector once for all collections (efficiency)
     const embeddingStart = performance.now();
     if (usesClientEmbeddings(settings)) {
-        try {
-            // getAdditionalArgs expects string[], not objects
-            const additionalArgs = await getAdditionalArgs([searchText], settings, null, 'query');
-            // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
-            if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
-                queryVector = additionalArgs.embeddings[searchText];
-            } else {
-                // A failed client embedding must not contact another inference provider.
-                throw new Error('Client embedding returned no query vector.');
-            }
-        } catch (clientEmbedError) {
-            // Propagate local failures without server or cloud fallback.
-            throw clientEmbedError;
+        // getAdditionalArgs expects string[], not objects
+        const additionalArgs = await getAdditionalArgs([searchText], settings, null, 'query');
+        // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
+        if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
+            queryVector = additionalArgs.embeddings[searchText];
+        } else {
+            // A failed client embedding must not contact another inference provider.
+            throw new Error('Client embedding returned no query vector.');
         }
     }
     const queryEmbeddingMs = performance.now() - embeddingStart;

@@ -9,18 +9,15 @@
  * ============================================================================
  */
 
-import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, chat_metadata, extension_prompts } from '../../../../../script.js';
+import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, extension_prompts } from '../../../../../script.js';
 import { getContext } from '../../../../extensions.js';
-import { getStringHash as calculateHash, waitUntilCondition, onlyUnique } from '../../../../utils.js';
-import { isUnitStrategy } from './chunking.js';
+import { getStringHash as calculateHash, waitUntilCondition } from '../../../../utils.js';
 import { extractChatKeywords, extractBM25Keywords } from './keyword-boost.js';
 import { cleanText } from './text-cleaning.js';
 import {
     getSavedHashes,
     insertVectorItems,
     queryMultipleCollections,
-    queryActiveCollections,
-    deleteVectorItems,
     purgeVectorIndex,
 } from './core-vector-api.js';
 import { isBackendAvailable } from '../backends/backend-manager.js';
@@ -455,9 +452,6 @@ async function rerankWithBananaBread(query, chunks, settings) {
 export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = false) {
     // Build proper collection ID using chat UUID first
     const collectionId = getChatCollectionId();
-    console.log(`🔍 VectHare DEBUG: getChatCollectionId() returned: "${collectionId}"`);
-    console.log(`🔍 VectHare DEBUG: settings.vector_backend = "${settings.vector_backend}"`);
-    console.log(`🔍 VectHare DEBUG: settings.source = "${settings.source}"`);
     if (!collectionId) {
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
@@ -477,7 +471,9 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
     try {
         await waitUntilCondition(() => !syncBlocked && !is_send_press, 1000);
     } catch {
-        syncBlocked = false; // VEC-30: Reset flag on timeout
+        // Another sync is still running (or a generation is in progress).
+        // Do NOT clear syncBlocked here: it belongs to the running sync, and
+        // clearing it would let a third caller start a concurrent sync.
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
 
@@ -549,7 +545,6 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
                 if (chunks.length > 0) {
                     await insertVectorItems(collectionId, chunks, settings, (embedded, total) => {
                         // Update progress tracker with embedding progress
-                        console.log(`[Chat Vectorization] Embedding progress callback: ${embedded}/${total}`);
                         progressTracker.updateEmbeddingProgress(embedded, total);
 
                         // Determine phase based on progress (0-50% = Embedding, 50-100% = Writing)
@@ -565,8 +560,6 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
                         const backend = settings.vector_backend || 'standard';
                         const source = settings.source || 'transformers';
                         const registryKey = `${backend}:${source}:${collectionId}`;
-                        console.log(`🔍 VectHare DEBUG: Registering collection with key: "${registryKey}"`);
-                        console.log(`🔍 VectHare DEBUG: Components: backend="${backend}", source="${source}", collectionId="${collectionId}"`);
                         registerCollection(registryKey);
                         isRegistered = true;
                         console.log(`VectHare: Registered collection ${registryKey} after first successful insert`);

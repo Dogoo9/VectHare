@@ -30,6 +30,7 @@
 
 import { getRequestHeaders } from '../../../../../script.js';
 import { VectorBackend } from './backend-interface.js';
+import { stripRegistryPrefix } from '../core/collection-ids.js';
 import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import AsyncUtils from '../utils/async-utils.js';
@@ -128,27 +129,7 @@ export class QdrantBackend extends VectorBackend {
      * @returns {string} - Just the collection ID part
      */
     _stripRegistryPrefix(collectionId) {
-        if (!collectionId || typeof collectionId !== 'string') {
-            return collectionId;
-        }
-
-        const knownBackends = ['standard', 'lancedb', 'vectra', 'milvus', 'qdrant'];
-        const knownSources = ['transformers', 'openai', 'cohere', 'ollama', 'llamacpp',
-            'vllm', 'koboldcpp', 'webllm', 'bananabread', 'openrouter'];
-
-        const parts = collectionId.split(':');
-
-        // Check if it starts with backend:source: prefix
-        if (parts.length >= 3 && knownBackends.includes(parts[0]) && knownSources.includes(parts[1])) {
-            return parts.slice(2).join(':');
-        }
-        // Check if it starts with source: prefix (old format)
-        else if (parts.length >= 2 && knownSources.includes(parts[0])) {
-            return parts.slice(1).join(':');
-        }
-
-        // Already plain collection ID
-        return collectionId;
+        return stripRegistryPrefix(collectionId);
     }
 
     /**

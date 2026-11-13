@@ -24,9 +24,8 @@ import { debounce } from '../../../utils.js';
 import { debounce_timeout } from '../../../constants.js';
 
 // VectHare modules - Core
-import { synchronizeChat, rearrangeChat, vectorizeAll } from './core/chat-vectorization.js';
-import { purgeAllVectorIndexes, purgeVectorIndex } from './core/core-vector-api.js';
-import { getChatCollectionId } from './core/chat-vectorization.js';
+import { synchronizeChat, rearrangeChat, vectorizeAll, getChatCollectionId } from './core/chat-vectorization.js';
+import { purgeVectorIndex } from './core/core-vector-api.js';
 import { getDefaultDecaySettings } from './core/temporal-decay.js';
 import { migrateOldEnabledKeys } from './core/collection-metadata.js';
 import { clearCollectionRegistry, discoverExistingCollections } from './core/collection-loader.js';
@@ -36,7 +35,7 @@ import AsyncUtils from './utils/async-utils.js';
 import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmStatus, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
 import { initializeVisualizer } from './ui/chunk-visualizer.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
-import { initializeSceneMarkers, updateAllMarkerStates, setSceneSettings } from './ui/scene-markers.js';
+import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';
 import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
 
 // VectHare modules - Cotton-Tales Integration
@@ -158,7 +157,7 @@ const defaultSettings = {
 };
 
 // Runtime settings (merged with saved settings)
-let settings = { ...defaultSettings };
+const settings = structuredClone(defaultSettings);
 
 // Module worker for automatic syncing
 const moduleWorker = new ModuleWorkerWrapper(() => synchronizeChat(settings, getBatchSize()));
@@ -201,26 +200,34 @@ async function onPurgeClick() {
     }
 
     try {
-        const { getRequestHeaders } = await import('../../../../script.js');
+        const { getRequestHeaders, saveSettingsDebounced } = await import('../../../../script.js');
 
-        // 1. Delete entire vectors folder
-        await fetch('/api/plugins/similharity/purge-all', {
+        // 1. Delete entire vectors folder (requires the Similharity plugin)
+        const response = await fetch('/api/plugins/similharity/purge-all', {
             method: 'POST',
             headers: getRequestHeaders(),
         });
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status} ${response.statusText}. Is the Similharity plugin installed?`);
+        }
 
-        // 2. Clear extension_settings.vecthare
+        // 2. Reset settings in place. Other modules hold a reference to the
+        // runtime `settings` object and write it back on every UI change, so
+        // clearing only extension_settings would be silently undone.
         for (const key in extension_settings.vecthare) {
             if (key !== 'enabled') {
                 delete extension_settings.vecthare[key];
             }
         }
+        for (const key of Object.keys(settings)) delete settings[key];
+        Object.assign(settings, structuredClone(defaultSettings));
+        Object.assign(extension_settings.vecthare, structuredClone(defaultSettings));
+        clearCollectionRegistry();
 
         // 3. Save settings
-        const { saveSettingsDebounced } = await import('../../../../script.js');
         saveSettingsDebounced();
 
-        toastr.success('All vector data purged', 'Purge Complete');
+        toastr.success('All vector data purged. Reload the page to refresh the settings panel.', 'Purge Complete');
 
     } catch (error) {
         console.error('VectHare: Purge failed:', error);
@@ -243,12 +250,12 @@ jQuery(async () => {
 
     // Load saved settings
     if (!extension_settings.vecthare) {
-        extension_settings.vecthare = defaultSettings;
+        extension_settings.vecthare = structuredClone(defaultSettings);
     }
 
     // Merge saved settings with defaults
-    settings = {
-        ...defaultSettings,
+    Object.assign(settings, {
+        ...structuredClone(defaultSettings),
         ...extension_settings.vecthare,
         temporal_decay: {
             ...defaultSettings.temporal_decay,
@@ -258,7 +265,7 @@ jQuery(async () => {
             ...defaultSettings.collections,
             ...extension_settings.vecthare.collections
         }
-    };
+    });
 
     // Migrate old scattered enabled keys to new collections structure
     const migrationResult = migrateOldEnabledKeys();
@@ -339,24 +346,19 @@ jQuery(async () => {
         });
     }
     // When a chat is deleted, purge its vectors (not full purge, just that chat)
-    eventSource.on(event_types.CHAT_DELETED, async (chatId) => {
-        if (chatId) {
-            const collectionId = getChatCollectionId(chatId);
-            if (collectionId) {
-                await purgeVectorIndex(collectionId, settings);
-                console.log(`VectHare: Purged vectors for deleted chat: ${chatId}`);
-            }
+    const onChatDeleted = async (chatId) => {
+        if (!chatId) return;
+        const collectionId = getChatCollectionId(chatId);
+        if (!collectionId) return;
+        try {
+            await purgeVectorIndex(collectionId, settings);
+            console.log(`VectHare: Purged vectors for deleted chat: ${chatId}`);
+        } catch (error) {
+            console.warn(`VectHare: Failed to purge vectors for deleted chat ${chatId}:`, error);
         }
-    });
-    eventSource.on(event_types.GROUP_CHAT_DELETED, async (chatId) => {
-        if (chatId) {
-            const collectionId = getChatCollectionId(chatId);
-            if (collectionId) {
-                await purgeVectorIndex(collectionId, settings);
-                console.log(`VectHare: Purged vectors for deleted group chat: ${chatId}`);
-            }
-        }
-    });
+    };
+    eventSource.on(event_types.CHAT_DELETED, onChatDeleted);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, onChatDeleted);
 
     // When WebLLM extension is loaded, refresh the model list
     eventSource.on(event_types.EXTENSION_SETTINGS_LOADED, async (manifest) => {

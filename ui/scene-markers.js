@@ -18,11 +18,9 @@ import {
     createSceneChunk,
     deleteSceneChunk,
     getCurrentCollectionId,
-    filterSceneChunks,
 } from '../core/scenes.js';
 import { getSavedHashes } from '../core/core-vector-api.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { getContext } from '../../../../extensions.js';
 
 // ============================================================================
 // CONSTANTS

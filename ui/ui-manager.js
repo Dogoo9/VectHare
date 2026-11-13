@@ -10,14 +10,13 @@
  * ============================================================================
  */
 
-import { saveSettingsDebounced, getCurrentChatId, eventSource, event_types } from '../../../../../script.js';
+import { saveSettingsDebounced, getCurrentChatId } from '../../../../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../../../../extensions.js';
 import { writeSecret, SECRET_KEYS, secret_state, readSecretState } from '../../../../secrets.js';
 import { getWebLlmProvider as getSharedWebLlmProvider } from '../providers/webllm.js';
-import { openVisualizer } from './chunk-visualizer.js';
 import { openDatabaseBrowser } from './database-browser.js';
 import { openContentVectorizer } from './content-vectorizer.js';
-import { openSearchDebugModal, getLastSearchDebug } from './search-debug.js';
+import { openSearchDebugModal } from './search-debug.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { resetBackendHealth } from '../backends/backend-manager.js';
 import { getHealthIndicatorHtml, getHealthModalHtml, initializeHealthDashboard } from './health-dashboard.js';

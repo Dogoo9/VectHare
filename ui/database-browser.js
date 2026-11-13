@@ -13,54 +13,40 @@ import { openCollectionDuplicateDialog } from './collection-duplicate-dialog.js'
  */
 
 import {
-  loadAllCollections,
-  setCollectionEnabled,
-  registerCollection,
-  unregisterCollection,
-  clearCollectionRegistry,
-  deleteCollection,
+    loadAllCollections,
+    setCollectionEnabled,
+    clearCollectionRegistry,
+    deleteCollection,
 } from "../core/collection-loader.js";
 import {
-  purgeVectorIndex,
-  queryMultipleCollections,
+    queryMultipleCollections,
 } from "../core/core-vector-api.js";
 import { getRequestHeaders, getCurrentChatId, eventSource, event_types } from "../../../../../script.js";
 import {
-  cleanupOrphanedMeta,
-  deleteCollectionMeta,
-  getCollectionConditions,
-  setCollectionConditions,
-  getCollectionTriggers,
-  setCollectionTriggers,
-  getCollectionMeta,
-  setCollectionMeta,
-  getCollectionActivationSummary,
-  getCollectionDecaySummary,
-  getCollectionDecaySettings,
-  setCollectionDecaySettings,
-  hasCustomDecaySettings,
-  getDefaultDecayForType,
-  isCollectionEnabled,
-  // Locking API
-  getCollectionLock,
-  getCollectionLocks,
-  setCollectionLock,
-  removeCollectionLock,
-  clearCollectionLock,
-  isCollectionLockedToChat,
-  getCollectionLockCount,
-  // Character Locking API
-  getCollectionCharacterLocks,
-  setCollectionCharacterLock,
-  removeCollectionCharacterLock,
-  clearCollectionCharacterLocks,
-  isCollectionLockedToCharacter,
-  getCollectionCharacterLockCount,
-  getChatCollectionPolicy,
-  setChatCollectionPolicy,
-  addCollectionToChatPolicy,
-  removeCollectionFromChatPolicy,
-  isCollectionSelectedForChat,
+    cleanupOrphanedMeta,
+    getCollectionConditions,
+    setCollectionConditions,
+    getCollectionTriggers,
+    getCollectionMeta,
+    setCollectionMeta,
+    getCollectionActivationSummary,
+    getCollectionDecaySummary,
+    getCollectionDecaySettings,
+    getCollectionLocks,
+    setCollectionLock,
+    removeCollectionLock,
+    isCollectionLockedToChat,
+    getCollectionLockCount,
+    getCollectionCharacterLocks,
+    setCollectionCharacterLock,
+    removeCollectionCharacterLock,
+    isCollectionLockedToCharacter,
+    getCollectionCharacterLockCount,
+    getChatCollectionPolicy,
+    setChatCollectionPolicy,
+    addCollectionToChatPolicy,
+    removeCollectionFromChatPolicy,
+    isCollectionSelectedForChat,
 } from "../core/collection-metadata.js";
 import { getContext } from "../../../../extensions.js";
 import {
@@ -71,7 +57,6 @@ import {
 import { world_names, loadWorldInfo } from "../../../../world-info.js";
 import { icons } from "./icons.js";
 import { openVisualizer } from "./chunk-visualizer.js";
-import { queryCollection } from "../core/core-vector-api.js";
 import {
   exportCollection,
   importCollection,
@@ -81,13 +66,13 @@ import {
   getExportInfo,
 } from "../core/collection-export.js";
 import {
-  embedDataInPNG,
-  extractDataFromPNG,
-  downloadPNG,
-  readPNGFile,
-  convertToPNG,
-  isVectHarePNG,
+    embedDataInPNG,
+    extractDataFromPNG,
+    downloadPNG,
+    readPNGFile,
+    convertToPNG,
 } from "../core/png-export.js";
+import { escapeHtml } from "../utils/html.js";
 
 // Plugin availability cache
 let pluginAvailable = null;
@@ -865,7 +850,7 @@ function renderCollectionCard(collection) {
         <div class="vecthare-collection-card" data-collection-key="${uniqueKey}" data-status="${collection.enabled ? "active" : "paused"}">
             <div class="vecthare-collection-header">
                 <span class="vecthare-collection-title">
-                    ${typeIcon} ${collection.name}
+                    ${typeIcon} ${escapeHtml(collection.name)}
                 </span>
                 <div class="vecthare-collection-badges">
                     ${scopeBadge}
@@ -891,7 +876,7 @@ function renderCollectionCard(collection) {
                 </button>
                 <button class="vecthare-btn-sm vecthare-action-rename"
                         data-collection-key="${uniqueKey}"
-                        data-current-name="${collection.name.replace(/"/g, "&quot;")}"
+                        data-current-name="${escapeHtml(collection.name)}"
                         title="Rename this collection">
                     ${icons.pencil(16)} Rename
                 </button>
@@ -1047,12 +1032,6 @@ function formatBytes(bytes) {
  * @param {string} text Text to escape
  * @returns {string} Escaped text
  */
-function escapeHtml(text) {
-  if (!text) return "";
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
 
 /**
  * Binds events for collection card actions
@@ -1599,11 +1578,11 @@ function openModelSwitcher(collection) {
 
       return `
             <div class="vecthare-model-item ${isActive ? "vecthare-model-active" : ""}"
-                 data-model-path="${model.path}">
+                 data-model-path="${escapeHtml(model.path)}">
                 <div class="vecthare-model-item-info">
                     <span class="vecthare-model-name">
                         ${isActive ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-cube"></i>'}
-                        ${modelName}
+                        ${escapeHtml(modelName)}
                     </span>
                     <span class="vecthare-model-chunks">${model.chunkCount} ${chunkLabel}</span>
                 </div>
@@ -2635,7 +2614,7 @@ function renderConditionSettings(rule, index) {
       // Get available world names for the picker
       const availableWorlds = world_names || [];
       const worldOptions = availableWorlds
-        .map((w) => `<option value="${w}">${w}</option>`)
+        .map((w) => `<option value="${escapeHtml(w)}">${escapeHtml(w)}</option>`)
         .join("");
       const selectedValues = settings.values || [];
       return `
@@ -2654,8 +2633,8 @@ function renderConditionSettings(rule, index) {
                         ${selectedValues
                           .map(
                             (v) => `
-                            <span class="vecthare-lorebook-tag" data-value="${v}">
-                                ${v} <button class="vecthare-lorebook-remove" data-value="${v}" data-rule-index="${index}">×</button>
+                            <span class="vecthare-lorebook-tag" data-value="${escapeHtml(v)}">
+                                ${escapeHtml(v)} <button class="vecthare-lorebook-remove" data-value="${escapeHtml(v)}" data-rule-index="${index}">×</button>
                             </span>
                         `,
                           )
@@ -2806,7 +2785,7 @@ function bindConditionRuleEvents() {
             .map((entry) => {
               const displayName =
                 entry.comment || entry.key?.join(", ") || `Entry ${entry.uid}`;
-              return `<option value="${entry.uid}" data-key="${entry.key?.join(",") || ""}">${displayName}</option>`;
+              return `<option value="${escapeHtml(entry.uid)}" data-key="${escapeHtml(entry.key?.join(",") || "")}">${escapeHtml(displayName)}</option>`;
             })
             .join("");
           entrySelect.html(
@@ -2879,8 +2858,8 @@ function bindConditionRuleEvents() {
         ? `${worldName}:${entrySelect.find(":selected").text()}`
         : worldName;
       selectedContainer.append(`
-            <span class="vecthare-lorebook-tag" data-value="${valueToAdd}">
-                ${displayName} <button class="vecthare-lorebook-remove" data-value="${valueToAdd}" data-rule-index="${idx}">×</button>
+            <span class="vecthare-lorebook-tag" data-value="${escapeHtml(valueToAdd)}">
+                ${escapeHtml(displayName)} <button class="vecthare-lorebook-remove" data-value="${escapeHtml(valueToAdd)}" data-rule-index="${idx}">×</button>
             </span>
         `);
 
@@ -3781,7 +3760,7 @@ function openCollectionLockDialog(collectionId) {
                 <div class="vecthare-lock-item" data-character-id="${charId}">
                     <span class="vecthare-lock-character-name">
                         <i class="fa-solid fa-user"></i>
-                        ${charName}
+                        ${escapeHtml(charName)}
                     </span>
                     <div class="vecthare-lock-item-actions">
                         ${String(charId) === String(currentCharacterId) ? '<span class="vecthare-lock-badge-current">Active</span>' : ''}

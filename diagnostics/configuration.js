@@ -13,7 +13,7 @@ import { getCurrentChatId, chat_metadata } from '../../../../../script.js';
 import { getSavedHashes } from '../core/core-vector-api.js';
 import { getChatCollectionId, getChatUUID, parseCollectionId } from '../core/chat-vectorization.js';
 import { VALID_EMOTIONS, VALID_GENERATION_TYPES, validateConditionRule } from '../core/conditional-activation.js';
-import { getTemporallyBlindCount, getTemporallyBlindChunks, isChunkTemporallyBlind, isCollectionEnabled } from '../core/collection-metadata.js';
+import { getTemporallyBlindCount, getTemporallyBlindChunks, isCollectionEnabled } from '../core/collection-metadata.js';
 import { getCollectionRegistry } from '../core/collection-loader.js';
 
 /**

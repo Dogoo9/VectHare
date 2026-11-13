@@ -19,6 +19,7 @@
 // ============================================================================
 
 import { logger } from '../utils/logger.js';
+import { escapeHtml } from '../utils/html.js';
 
 let lastDebugData = null;
 const queryHistory = []; // Store last N queries
@@ -638,7 +639,7 @@ function renderStageChunks(chunks, stageName, data) {
                             ${chunk.metadata?.keywords?.length ? `
                             <div class="vecthare-debug-meta-item">
                                 <span class="meta-label">Keywords</span>
-                                <span class="meta-value">${chunk.metadata.keywords.map(k => typeof k === 'object' ? `${k.text}(${k.weight}x)` : k).join(', ')}</span>
+                                <span class="meta-value">${escapeHtml(chunk.metadata.keywords.map(k => typeof k === 'object' ? `${k.text}(${k.weight}x)` : k).join(', '))}</span>
                             </div>` : ''}
                             ${chunk.matchedQueryKeywords?.length ? `
                             <div class="vecthare-debug-meta-item">
@@ -1393,12 +1394,6 @@ function getTimeAgo(timestamp) {
 /**
  * Escapes HTML special characters
  */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // ============================================================================
 // DEVELOPER TRACE LOG

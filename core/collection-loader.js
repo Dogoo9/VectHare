@@ -12,7 +12,7 @@
 import { extension_settings } from '../../../../extensions.js';
 import { getContext } from '../../../../extensions.js';
 import { characters, substituteParams, getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
-import { getSavedHashes, queryCollection } from './core-vector-api.js';
+import { getSavedHashes } from './core-vector-api.js';
 import { getStringHash } from '../../../../utils.js';
 import {
     isCollectionEnabled,
@@ -914,11 +914,11 @@ export async function loadCollectionChunks(collectionId, settings) {
     const context = getContext();
     const result = await getSavedHashes(collectionId, settings, true); // includeMetadata = true
 
-    console.log(`VectHare DEBUG: loadCollectionChunks result type:`, Array.isArray(result) ? 'array' : 'object');
+    console.debug(`VectHare: loadCollectionChunks result type:`, Array.isArray(result) ? 'array' : 'object');
     if (!Array.isArray(result)) {
-        console.log(`VectHare DEBUG: result.metadata length:`, result.metadata?.length);
+        console.debug(`VectHare: result.metadata length:`, result.metadata?.length);
         if (result.metadata?.length > 0) {
-            console.log(`VectHare DEBUG: First item metadata:`, result.metadata[0]);
+            console.debug(`VectHare: First item metadata:`, result.metadata[0]);
         }
     }
 
