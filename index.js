@@ -31,7 +31,9 @@ import { clearCollectionRegistry, discoverExistingCollections } from './core/col
 import AsyncUtils from './utils/async-utils.js';
 
 // VectHare modules - UI
-import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmStatus, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
+import { renderSettings, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
+import { openDiagnosticsModal } from './ui/diagnostics-modal.js';
+import { loadWebLlmModels, updateWebLlmStatus } from './ui/webllm-ui.js';
 import { initializeVisualizer } from './ui/chunk-visualizer.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';

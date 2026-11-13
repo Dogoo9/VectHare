@@ -68,6 +68,16 @@ describe('UI smoke test', () => {
         expect(errors).toEqual([]);
     });
 
+    it('opens the diagnostics modal', async () => {
+        const { renderSettings } = await import('../ui/ui-manager.js');
+        const { openDiagnosticsModal } = await import('../ui/diagnostics-modal.js');
+        renderSettings('extensions_settings2', baseSettings(), { onVectorizeAll: vi.fn(), onPurge: vi.fn(), onRunDiagnostics: vi.fn() });
+        openDiagnosticsModal();
+        await flush();
+        expect($('#vecthare_diagnostics_modal').length).toBe(1);
+        expect(errors).toEqual([]);
+    });
+
     it('opens the database browser', async () => {
         const { initializeDatabaseBrowser, openDatabaseBrowser } = await import('../ui/database-browser.js');
         initializeDatabaseBrowser(baseSettings());
