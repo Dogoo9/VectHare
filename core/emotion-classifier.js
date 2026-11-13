@@ -14,6 +14,7 @@
 
 import { getRequestHeaders } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
+import { logger } from '../utils/logger.js';
 
 // =============================================================================
 // CONSTANTS
@@ -76,20 +77,6 @@ export function isCottonTalesInstalled() {
     }
 }
 
-/**
- * Check if Cotton-Tales is using VectHare for classification
- * @returns {boolean}
- */
-export function isCottonTalesUsingVectHare() {
-    try {
-        const ctSettings = extension_settings?.cotton_tales;
-        // EXPRESSION_API.vecthare = 4
-        return ctSettings?.expressionApi === 4;
-    } catch {
-        return false;
-    }
-}
-
 // =============================================================================
 // CLASSIFIER API
 // =============================================================================
@@ -103,7 +90,7 @@ const CACHE_MAX_SIZE = 100;
  */
 export function clearClassifierCache() {
     classifierCache.clear();
-    console.log(`[${MODULE_NAME}] Classifier cache cleared`);
+    logger.debug(`[${MODULE_NAME}] Classifier cache cleared`);
 }
 
 /**
@@ -122,7 +109,7 @@ export async function classifyEmotion(text, options = {}) {
 
     const settings = getClassifierSettings();
     if (!settings.enabled) {
-        console.debug(`[${MODULE_NAME}] Classifier not enabled`);
+        logger.debug(`[${MODULE_NAME}] Classifier not enabled`);
         return null;
     }
 
@@ -150,7 +137,7 @@ export async function classifyEmotion(text, options = {}) {
         const data = await response.json();
 
         if (!data?.classification?.length) {
-            console.debug(`[${MODULE_NAME}] No classification result`);
+            logger.debug(`[${MODULE_NAME}] No classification result`);
             return null;
         }
 
@@ -168,7 +155,7 @@ export async function classifyEmotion(text, options = {}) {
         }
         classifierCache.set(cacheKey, result);
 
-        console.log(`[${MODULE_NAME}] Classified as "${result.label}" (${(result.score * 100).toFixed(1)}%)`);
+        logger.debug(`[${MODULE_NAME}] Classified as "${result.label}" (${(result.score * 100).toFixed(1)}%)`);
         return result;
     } catch (error) {
         console.error(`[${MODULE_NAME}] Classification error:`, error);
@@ -303,7 +290,7 @@ export function updateClassifierSetting(key, value) {
         clearClassifierCache();
     }
 
-    console.log(`[${MODULE_NAME}] Setting ${settingKey} = ${value}`);
+    logger.debug(`[${MODULE_NAME}] Setting ${settingKey} = ${value}`);
 }
 
 // =============================================================================

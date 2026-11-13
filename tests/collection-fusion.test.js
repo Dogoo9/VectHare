@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    areEmbeddingSpacesCompatible,
     fuseCollectionResults,
-    mergeCalibratedCollectionResults,
 } from '../core/collection-fusion.js';
 
 const embedding = {
@@ -52,26 +50,5 @@ describe('cross-collection fusion', () => {
             { collectionId: 'two', collectionType: 'external_document', embedding, results: [{ hash: 'a', score: 0.9 }] },
         ]).results;
         expect(tied.map(r => r.hash)).toEqual(['a', 'z']);
-    });
-
-    it('rejects calibrated comparison without compatible identity and evaluation data', () => {
-        expect(areEmbeddingSpacesCompatible(embedding, { ...embedding })).toBe(true);
-        expect(areEmbeddingSpacesCompatible(embedding, { ...embedding, dimension: 3072 })).toBe(false);
-        expect(() => mergeCalibratedCollectionResults([], { enabled: false })).toThrow(/explicitly enabled/);
-        expect(() => mergeCalibratedCollectionResults([
-            { collectionId: 'a', embedding, calibration: { evaluationId: 'eval-1', transform: x => x }, results: [] },
-            { collectionId: 'b', embedding: { ...embedding, dimension: 3072 }, calibration: { evaluationId: 'eval-1', transform: x => x }, results: [] },
-        ], { enabled: true })).toThrow(/incompatible/);
-    });
-
-    it('allows evaluation-backed calibrated merging for one embedding space', () => {
-        const calibration = { evaluationId: 'eval-2026-09', transform: score => score / 2 };
-        const merged = mergeCalibratedCollectionResults([
-            { collectionId: 'a', embedding, calibration, results: [{ hash: 'a', score: 1 }] },
-            { collectionId: 'b', embedding, calibration, results: [{ hash: 'b', score: 0.5 }] },
-        ], { enabled: true });
-        expect(merged.method).toBe('calibrated_score');
-        expect(merged.results.map(r => r.hash)).toEqual(['a', 'b']);
-        expect(merged.results[0].rawBackendScore).toBe(1);
     });
 });

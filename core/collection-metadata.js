@@ -14,6 +14,7 @@ import { saveSettingsDebounced } from '../../../../../script.js';
 import { parseRegistryKey } from './collection-ids.js';
 import { storedCollectionKey } from './collection-runtime.js';
 import { matchesTextPattern } from './plain-text-matcher.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // COLLECTION METADATA CRUD
@@ -311,7 +312,7 @@ export function setCollectionMeta(collectionId, data) {
     };
 
     saveSettingsDebounced();
-    console.log(`VectHare: Updated metadata for collection ${key}`);
+    logger.debug(`VectHare: Updated metadata for collection ${key}`);
 }
 
 /**
@@ -325,17 +326,8 @@ export function deleteCollectionMeta(collectionId) {
     if (key) {
         delete extension_settings.vecthare.collections[key];
         saveSettingsDebounced();
-        console.log(`VectHare: Deleted metadata for collection ${key}`);
+        logger.debug(`VectHare: Deleted metadata for collection ${key}`);
     }
-}
-
-/**
- * Gets all collection metadata
- * @returns {object} Map of collectionId -> metadata
- */
-export function getAllCollectionMeta() {
-    ensureCollectionsObject();
-    return extension_settings.vecthare.collections;
 }
 
 // ============================================================================
@@ -432,7 +424,7 @@ export function setChatCollectionPolicy(chatId, policy) {
     };
 
     saveSettingsDebounced();
-    console.log(`VectHare: Updated collection policy for chat ${chatId}`);
+    logger.debug(`VectHare: Updated collection policy for chat ${chatId}`);
 }
 
 /**
@@ -680,7 +672,7 @@ export function migrateOldEnabledKeys() {
                     ...defaultCollectionMeta,
                     enabled: enabled !== false,
                 };
-                console.log(`VectHare: Migrated enabled key for ${collectionId}`);
+                logger.debug(`VectHare: Migrated enabled key for ${collectionId}`);
             }
 
             keysToDelete.push(key);
@@ -695,7 +687,7 @@ export function migrateOldEnabledKeys() {
 
     if (migrated > 0) {
         saveSettingsDebounced();
-        console.log(`VectHare: Migrated ${migrated} old enabled keys to new collections structure`);
+        logger.debug(`VectHare: Migrated ${migrated} old enabled keys to new collections structure`);
     }
 
     return { migrated };
@@ -720,12 +712,12 @@ export function cleanupOrphanedMeta(actualCollectionIds) {
 
     for (const collectionId of orphaned) {
         delete extension_settings.vecthare.collections[collectionId];
-        console.log(`VectHare: Removed orphaned metadata for ${collectionId}`);
+        logger.debug(`VectHare: Removed orphaned metadata for ${collectionId}`);
     }
 
     if (orphaned.length > 0) {
         saveSettingsDebounced();
-        console.log(`VectHare: Cleaned up ${orphaned.length} orphaned metadata entries`);
+        logger.debug(`VectHare: Cleaned up ${orphaned.length} orphaned metadata entries`);
     }
 
     return { removed: orphaned.length, orphanedIds: orphaned };
@@ -770,7 +762,7 @@ export function setCollectionLock(collectionId, chatId) {
     }
 
     setCollectionMeta(collectionId, update);
-    console.log(`VectHare: Collection ${collectionId} locks updated:`, update.lockedToChatIds);
+    logger.debug(`VectHare: Collection ${collectionId} locks updated:`, update.lockedToChatIds);
 }
 
 /**
@@ -797,15 +789,7 @@ export function removeCollectionLock(collectionId, chatId) {
     update.lockedToChatId = null; // Clear old format
 
     setCollectionMeta(collectionId, update);
-    console.log(`VectHare: Removed chat ${chatId} from collection ${collectionId} locks`);
-}
-
-/**
- * Clears all locks for a collection (removes from all chats)
- * @param {string} collectionId
- */
-export function clearCollectionLock(collectionId) {
-    setCollectionLock(collectionId, null);
+    logger.debug(`VectHare: Removed chat ${chatId} from collection ${collectionId} locks`);
 }
 
 /**
@@ -824,16 +808,6 @@ export function getCollectionLocks(collectionId) {
     }
 
     return locks;
-}
-
-/**
- * Gets the first locked chat ID (for backward compat with single-lock code)
- * @param {string} collectionId
- * @returns {string|null}
- */
-export function getCollectionLock(collectionId) {
-    const locks = getCollectionLocks(collectionId);
-    return locks.length > 0 ? locks[0] : null;
 }
 
 /**
@@ -882,7 +856,7 @@ export function setCollectionCharacterLock(collectionId, characterId) {
 
     update.lockedToCharacterIds = locks;
     setCollectionMeta(collectionId, update);
-    console.log(`VectHare: Collection ${collectionId} character locks updated:`, update.lockedToCharacterIds);
+    logger.debug(`VectHare: Collection ${collectionId} character locks updated:`, update.lockedToCharacterIds);
 }
 
 /**
@@ -902,17 +876,7 @@ export function removeCollectionCharacterLock(collectionId, characterId) {
 
     update.lockedToCharacterIds = locks;
     setCollectionMeta(collectionId, update);
-    console.log(`VectHare: Removed character ${characterId} from collection ${collectionId} locks`);
-}
-
-/**
- * Clears all character locks for a collection
- * @param {string} collectionId
- */
-export function clearCollectionCharacterLocks(collectionId) {
-    if (!collectionId) return;
-    setCollectionMeta(collectionId, { lockedToCharacterIds: [] });
-    console.log(`VectHare: Cleared all character locks for collection ${collectionId}`);
+    logger.debug(`VectHare: Removed character ${characterId} from collection ${collectionId} locks`);
 }
 
 /**
@@ -988,27 +952,7 @@ export function ensureCollectionMeta(collectionId, initialData = {}) {
             },
         };
         saveSettingsDebounced();
-        console.log(`VectHare: Created metadata for new collection ${collectionId} (type: ${collectionType})`);
-    }
-}
-
-/**
- * Updates lastUsed timestamp and increments queryCount
- * Called when a collection is queried
- * @param {string} collectionId Collection identifier
- */
-export function recordCollectionUsage(collectionId) {
-    if (!collectionId) {
-        return;
-    }
-
-    ensureCollectionsObject();
-
-    const existing = extension_settings.vecthare.collections[collectionId];
-    if (existing) {
-        existing.lastUsed = Date.now();
-        existing.queryCount = (existing.queryCount || 0) + 1;
-        saveSettingsDebounced();
+        logger.debug(`VectHare: Created metadata for new collection ${collectionId} (type: ${collectionType})`);
     }
 }
 
@@ -1096,7 +1040,7 @@ async function evaluateAdvancedConditions(meta, context, collectionId) {
 
     const results = rules.map(rule => {
         const result = evaluate(rule, context);
-        console.log(`VectHare: Collection ${collectionId} condition ${rule.type}: ${result}`);
+        logger.debug(`VectHare: Collection ${collectionId} condition ${rule.type}: ${result}`);
         return result;
     });
 
@@ -1151,7 +1095,7 @@ export async function shouldCollectionActivate(collectionId, context) {
 
     // Priority 1: Check if collection is disabled entirely
     if (meta.enabled === false || (meta.importState && meta.importState.status !== "ready") || (meta.migration && !["ready", "active"].includes(meta.migration.status))) {
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ DISABLED`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✗ DISABLED`);
         recordDecision('skipped', 'Collection is disabled');
         return false;
     }
@@ -1166,7 +1110,7 @@ export async function shouldCollectionActivate(collectionId, context) {
         const characterAllowed = hasCharacterLocks && currentCharacterId && characterLocks.some(id => String(id) === String(currentCharacterId));
 
         if ((hasChatLocks || hasCharacterLocks) && !chatAllowed && !characterAllowed) {
-            console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ LOCKED_TO_OTHER_CONTEXT`);
+            logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✗ LOCKED_TO_OTHER_CONTEXT`);
             recordDecision('skipped', 'Collection is locked to another chat/character');
             return false;
         }
@@ -1175,28 +1119,28 @@ export async function shouldCollectionActivate(collectionId, context) {
     // Priority 1.75: Explicitly selected/forced collections for this chat bypass
     // triggers and conditions but still respect disabled state and strict locks.
     if (forcedForChat || meta.forceMode === 'forced') {
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✓ FORCED_FOR_CHAT`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✓ FORCED_FOR_CHAT`);
         recordDecision('queried', 'Forced for current chat');
         return true;
     }
 
     // Priority 2: Check if always active (ignores everything else)
     if (meta.alwaysActive === true) {
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✓ ALWAYS_ACTIVE`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✓ ALWAYS_ACTIVE`);
         recordDecision('queried', 'Always Active');
         return true;
     }
 
     // Priority 2.5: Check if locked to current chat (overrides other conditions)
     if (currentChatId && isCollectionLockedToChat(collectionId, currentChatId)) {
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✓ LOCKED_TO_CURRENT_CHAT (${currentChatId})`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✓ LOCKED_TO_CURRENT_CHAT (${currentChatId})`);
         recordDecision('queried', 'Locked to current chat');
         return true;
     }
 
     // Priority 2.6: Check if locked to current character (overrides other conditions)
     if (currentCharacterId && isCollectionLockedToCharacter(collectionId, currentCharacterId)) {
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✓ LOCKED_TO_CURRENT_CHARACTER (${currentCharacterId})`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✓ LOCKED_TO_CURRENT_CHARACTER (${currentCharacterId})`);
         recordDecision('queried', 'Locked to current character');
         return true;
     }
@@ -1204,7 +1148,7 @@ export async function shouldCollectionActivate(collectionId, context) {
     const hasTriggers = meta.triggers && meta.triggers.length > 0;
     const hasConditions = meta.conditions?.enabled && meta.conditions?.rules?.length > 0;
 
-    console.log(`[VectHare Activation Filter] Collection ${collectionId}: hasTriggers=${hasTriggers}, hasConditions=${hasConditions}`);
+    logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: hasTriggers=${hasTriggers}, hasConditions=${hasConditions}`);
 
     // Priority 3: Check activation triggers (PRIMARY method)
     if (hasTriggers) {
@@ -1216,14 +1160,14 @@ export async function shouldCollectionActivate(collectionId, context) {
         });
 
         if (triggersMatch) {
-            console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✓ TRIGGERS_MATCHED (${meta.triggers.join(', ')})`);
+            logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✓ TRIGGERS_MATCHED (${meta.triggers.join(', ')})`);
             recordDecision('queried', 'Triggers matched', { matchedTriggers: meta.triggers });
             return true;
         }
 
         // Triggers set but didn't match - check if we should fall through to conditions
         if (!hasConditions) {
-            console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ TRIGGERS_NOT_MATCHED (no conditions to fallthrough)`);
+            logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✗ TRIGGERS_NOT_MATCHED (no conditions to fallthrough)`);
             recordDecision('skipped', 'Triggers did not match');
             return false;
         }
@@ -1232,13 +1176,13 @@ export async function shouldCollectionActivate(collectionId, context) {
     // Priority 4: Check advanced conditions (SECONDARY method)
     if (hasConditions) {
         const conditionsPass = await evaluateAdvancedConditions(meta, context, collectionId);
-        console.log(`[VectHare Activation Filter] Collection ${collectionId}: ${conditionsPass ? '✓' : '✗'} CONDITIONS_${conditionsPass ? 'PASS' : 'FAIL'}`);
+        logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ${conditionsPass ? '✓' : '✗'} CONDITIONS_${conditionsPass ? 'PASS' : 'FAIL'}`);
         recordDecision(conditionsPass ? 'queried' : 'skipped', conditionsPass ? 'Conditions passed' : 'Conditions failed');
         return conditionsPass;
     }
 
     // Priority 5: No triggers AND no conditions = do not activate
-    console.log(`[VectHare Activation Filter] Collection ${collectionId}: ✗ NO_TRIGGERS_OR_CONDITIONS (not activating)`);
+    logger.debug(`[VectHare Activation Filter] Collection ${collectionId}: ✗ NO_TRIGGERS_OR_CONDITIONS (not activating)`);
     recordDecision('skipped', 'No activation triggers or conditions configured');
     return false;
 }
@@ -1270,34 +1214,15 @@ export async function filterActiveCollections(collectionIds, context) {
             return !String(id).includes('lorebook') && !normalized.includes('lorebook');
         });
 
-        console.log(`[VectHare Activation Filter] Exclusive collection(s) active, suppressed ${activeIds.length - finalActiveIds.length} peer collection(s)`);
+        logger.debug(`[VectHare Activation Filter] Exclusive collection(s) active, suppressed ${activeIds.length - finalActiveIds.length} peer collection(s)`);
     }
 
-    console.log(`[VectHare Activation Filter] Summary: ${collectionIds.length} collections → ${finalActiveIds.length} active`);
+    logger.debug(`[VectHare Activation Filter] Summary: ${collectionIds.length} collections → ${finalActiveIds.length} active`);
     if (finalActiveIds.length > 0) {
-        console.log(`[VectHare Activation Filter] Active collections:`, finalActiveIds);
+        logger.debug(`[VectHare Activation Filter] Active collections:`, finalActiveIds);
     }
 
     return finalActiveIds;
-}
-
-// ============================================================================
-// ACTIVATION TRIGGER HELPERS
-// ============================================================================
-
-/**
- * Sets activation triggers for a collection
- * @param {string} collectionId Collection identifier
- * @param {string[]} triggers Array of trigger keywords
- * @param {object} options Optional: matchMode, caseSensitive, scanDepth, plainMatchMode
- */
-export function setCollectionTriggers(collectionId, triggers, options = {}) {
-    const update = { triggers };
-    if (options.matchMode !== undefined) update.triggerMatchMode = options.matchMode;
-    if (options.caseSensitive !== undefined) update.triggerCaseSensitive = options.caseSensitive;
-    if (options.scanDepth !== undefined) update.triggerScanDepth = options.scanDepth;
-    if (options.plainMatchMode !== undefined) update.triggerPlainMatchMode = options.plainMatchMode;
-    setCollectionMeta(collectionId, update);
 }
 
 /**
@@ -1314,25 +1239,6 @@ export function getCollectionTriggers(collectionId) {
         scanDepth: meta.triggerScanDepth || 5,
         plainMatchMode: meta.triggerPlainMatchMode || 'word',
     };
-}
-
-/**
- * Sets the always active flag for a collection
- * @param {string} collectionId Collection identifier
- * @param {boolean} alwaysActive Whether to always activate
- */
-export function setCollectionAlwaysActive(collectionId, alwaysActive) {
-    setCollectionMeta(collectionId, { alwaysActive });
-}
-
-/**
- * Checks if a collection is set to always active
- * @param {string} collectionId Collection identifier
- * @returns {boolean} Whether collection is always active
- */
-export function isCollectionAlwaysActive(collectionId) {
-    const meta = getCollectionMeta(collectionId);
-    return meta.alwaysActive === true;
 }
 
 /**
@@ -1386,22 +1292,6 @@ export function getCollectionConditions(collectionId) {
     return meta.conditions || { enabled: false, logic: 'AND', rules: [] };
 }
 
-// ============================================================================
-// TEMPORAL DECAY HELPERS (Per-Collection)
-// ============================================================================
-
-/**
- * Default temporal decay settings
- */
-const defaultTemporalDecay = {
-    enabled: false,
-    mode: 'exponential',
-    halfLife: 50,
-    linearRate: 0.01,
-    minRelevance: 0.3,
-    sceneAware: false,
-};
-
 /**
  * Gets temporal decay settings for a collection
  * Uses type-aware defaults (chat = enabled by default)
@@ -1427,21 +1317,6 @@ export function getCollectionDecaySettings(collectionId) {
 }
 
 /**
- * Sets temporal decay settings for a collection
- * @param {string} collectionId Collection identifier
- * @param {object} decaySettings Temporal decay settings
- */
-export function setCollectionDecaySettings(collectionId, decaySettings) {
-    const existing = getCollectionMeta(collectionId);
-    const merged = {
-        ...defaultTemporalDecay,
-        ...existing.temporalDecay,
-        ...decaySettings,
-    };
-    setCollectionMeta(collectionId, { temporalDecay: merged });
-}
-
-/**
  * Checks if a collection has custom (non-default) decay settings
  * @param {string} collectionId Collection identifier
  * @returns {boolean} Whether collection has custom decay configuration
@@ -1457,7 +1332,6 @@ export function hasCustomDecaySettings(collectionId) {
  * @returns {object} Summary { isCustom, enabled, mode, description }
  */
 export function getCollectionDecaySummary(collectionId) {
-    const meta = getCollectionMeta(collectionId);
     const isCustom = hasCustomDecaySettings(collectionId);
     const settings = getCollectionDecaySettings(collectionId);
 
@@ -1499,7 +1373,7 @@ export function setChunkTemporallyBlind(hash, isBlind, collectionId) {
         ...existing,
         temporallyBlind: isBlind,
     }, collectionId);
-    console.log(`VectHare: Chunk ${hash} temporally blind: ${isBlind}`);
+    logger.debug(`VectHare: Chunk ${hash} temporally blind: ${isBlind}`);
 }
 
 /**

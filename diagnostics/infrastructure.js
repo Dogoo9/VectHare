@@ -13,16 +13,14 @@ import { getRequestHeaders } from '../../../../../script.js';
 import { secret_state } from '../../../../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import {
-    EMBEDDING_PROVIDERS,
-    getValidProviderIds,
     isValidProvider,
     getProviderConfig,
     getModelField,
     getSecretKey,
     requiresApiKey,
     requiresUrl,
-    getUrlProviders
 } from '../core/providers.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 /**
  * Helper: Get provider-specific body parameters for Similharity plugin requests
@@ -180,10 +178,7 @@ export async function checkBackendEndpoints(settings) {
  */
 export async function checkServerPlugin() {
     try {
-        const response = await fetch('/api/plugins/similharity/health', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const response = await pluginRequest('/health');
 
         if (!response.ok) {
             return {
@@ -233,10 +228,7 @@ export async function checkPluginEndpoints() {
 
     // First check if plugin is available
     try {
-        const healthResponse = await fetch('/api/plugins/similharity/health', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const healthResponse = await pluginRequest('/health');
 
         if (!healthResponse.ok) {
             return {
@@ -327,10 +319,7 @@ export async function checkLanceDBBackend(settings) {
     }
 
     try {
-        const healthResponse = await fetch('/api/plugins/similharity/backend/health/lancedb', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const healthResponse = await pluginRequest('/backend/health/lancedb');
 
         if (!healthResponse.ok) {
             return {
@@ -432,11 +421,7 @@ export async function checkQdrantBackend(settings) {
             apiKey: settings.qdrant_api_key || null,
         };
 
-        const initResponse = await fetch('/api/plugins/similharity/backend/init/qdrant', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(initConfig)
-        });
+        const initResponse = await pluginRequest('/backend/init/qdrant', { body: initConfig });
 
         if (!initResponse.ok) {
             const errorText = await initResponse.text();
@@ -462,10 +447,7 @@ export async function checkQdrantBackend(settings) {
 
     // Then check health
     try {
-        const healthResponse = await fetch('/api/plugins/similharity/backend/health/qdrant', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const healthResponse = await pluginRequest('/backend/health/qdrant');
 
         if (!healthResponse.ok) {
             return {
@@ -536,10 +518,7 @@ export async function checkQdrantDimensionMatch(settings) {
 
     try {
         // Get collection info from Qdrant
-        const infoResponse = await fetch('/api/plugins/similharity/backend/qdrant/collection-info', {
-            method: 'GET',
-            headers: getRequestHeaders()
-        });
+        const infoResponse = await pluginRequest('/backend/qdrant/collection-info');
 
         if (!infoResponse.ok) {
             // Qdrant not initialized - that's checked elsewhere
@@ -563,17 +542,13 @@ export async function checkQdrantDimensionMatch(settings) {
         }
 
         // Get current embedding dimension by generating a test embedding
-        const testResponse = await fetch('/api/plugins/similharity/get-embedding', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const testResponse = await pluginRequest('/get-embedding', { body: {
                 text: 'test',
                 source: settings.source || 'transformers',
                 model: getModelFromSettings(settings),
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            })
-        });
+            } });
 
         if (!testResponse.ok) {
             return {

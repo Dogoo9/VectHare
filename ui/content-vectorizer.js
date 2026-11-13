@@ -11,25 +11,21 @@
  */
 
 import {
-    CONTENT_TYPES,
-    CHUNKING_STRATEGIES,
     getContentType,
     getAllContentTypes,
     getChunkingStrategies,
     getChunkingStrategy,
-    strategyNeedsSize,
-    strategyNeedsOverlap,
     getContentTypeDefaults,
     hasFeature,
-    SCOPE_OPTIONS,
     CHARACTER_FIELDS,
 } from '../core/content-types.js';
-import { extension_settings, getContext } from '../../../../extensions.js';
+import { getContext } from '../../../../extensions.js';
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { getChatUUID } from '../core/chat-vectorization.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../popup.js';
 import { openTextCleaningManager } from './text-cleaning-manager.js';
 import { checkWikiPlugin, scrapeWikiPages } from '../core/wiki-import.js';
+import { escapeHtml } from '../utils/html.js';
 
 // ============================================================================
 // STATE
@@ -845,8 +841,8 @@ function renderScopeOptions(type) {
     let chatName = 'No chat';
     if (hasChat) {
         // Try to get a meaningful chat name
-        if (typeof chat_metadata !== 'undefined' && chat_metadata?.chat_name) {
-            chatName = chat_metadata.chat_name;
+        if (context.chatMetadata?.chat_name) {
+            chatName = context.chatMetadata.chat_name;
         } else {
             chatName = `Chat #${context.chatId}`;
         }
@@ -1134,7 +1130,6 @@ function bindEvents() {
     // Strategy change
     $('#vecthare_cv_strategy').on('change', function() {
         const strategy = $(this).val();
-        const type = getContentType(currentContentType);
         const strategies = getChunkingStrategies(currentContentType);
         const selected = strategies.find(s => s.id === strategy);
 
@@ -1563,7 +1558,6 @@ function handleFileUpload(e) {
 
                     // Show stats
                     const enabledCount = entries.filter(e => !e.disable).length;
-                    const totalChars = entries.reduce((sum, e) => sum + (e.content?.length || 0), 0);
 
                     $('#vecthare_cv_upload_zone').hide();
                     $('#vecthare_cv_upload_info').show();
@@ -2178,8 +2172,6 @@ function handleChatFileUpload(e) {
 
         // Show stats
         const totalChars = messages.reduce((sum, m) => sum + (m.mes?.length || 0), 0);
-        const userCount = messages.filter(m => m.is_user).length;
-        const charCount = messages.filter(m => !m.is_user).length;
 
         $('#vecthare_cv_chat_upload_stats').show().html(`
             <div class="vecthare-cv-stats-grid">
@@ -2401,7 +2393,6 @@ function getSourceData() {
  * Starts the vectorization process
  */
 async function startVectorization() {
-    const type = getContentType(currentContentType);
     const source = getSourceData();
 
     if (!source) {
@@ -2484,11 +2475,6 @@ async function startVectorization() {
 /**
  * Escapes HTML entities
  */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // ============================================================================
 // TEXT CLEANING MANAGEMENT

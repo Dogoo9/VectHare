@@ -22,25 +22,29 @@ function redact(value, key = '', seen = new WeakSet()) {
 function emit(logLevel, message, details) {
     if (LEVELS[logLevel] > LEVELS[level]) return;
     const method = logLevel === 'trace' ? 'debug' : logLevel;
-    const prefix = `[VectHare] ${message}`;
-    if (details === undefined) console[method](prefix);
-    else console[method](prefix, redact(details));
+    if (typeof message !== 'string') {
+        details = [message, ...details];
+        message = '';
+    }
+    // Callers often already start with "VectHare:"; avoid a doubled prefix.
+    const prefix = `[VectHare] ${message.replace(/^\[?VectHare\]?:?\s*/, '')}`.trimEnd();
+    console[method](prefix, ...details.map(detail => redact(detail)));
 }
 
+/**
+ * Levelled console logger. Messages below the configured level are dropped;
+ * object details have content fields redacted unless content logging is on.
+ */
 export const logger = Object.freeze({
-    error: (message, details) => emit('error', message, details),
-    warn: (message, details) => emit('warn', message, details),
-    info: (message, details) => emit('info', message, details),
-    debug: (message, details) => emit('debug', message, details),
-    trace: (message, details) => emit('trace', message, details),
+    error: (message, ...details) => emit('error', message, details),
+    warn: (message, ...details) => emit('warn', message, details),
+    info: (message, ...details) => emit('info', message, details),
+    debug: (message, ...details) => emit('debug', message, details),
+    trace: (message, ...details) => emit('trace', message, details),
 });
 
 export function configureLogger(options = {}) {
     if (options.level in LEVELS) level = options.level;
     if (typeof options.content === 'boolean') contentLogging = options.content;
-}
-
-export function getLoggerConfig() {
-    return { level, content: contentLogging };
 }
 

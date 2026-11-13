@@ -27,12 +27,6 @@ export function embeddingSpaceKey(embedding = {}) {
     return [provider, modelId, dimension, distanceMetric, indexVersion].map(String).join('|');
 }
 
-export function areEmbeddingSpacesCompatible(left, right) {
-    const a = embeddingSpaceKey(left);
-    const b = embeddingSpaceKey(right);
-    return a !== null && b !== null && a === b;
-}
-
 function stableId(result) {
     return String(result.stableChunkId ?? result.hash ?? result.metadata?.chunkId ?? '');
 }
@@ -127,27 +121,3 @@ export function fuseCollectionResults(collections, options = {}) {
     };
 }
 
-/**
- * Merge scores only when all collections share a space and carry evaluation
- * backed calibration. Callers must explicitly request this mode.
- */
-export function mergeCalibratedCollectionResults(collections, options = {}) {
-    if (options.enabled !== true) throw new Error('Calibrated merging must be explicitly enabled');
-    const keys = (collections || []).map(c => embeddingSpaceKey(c.embedding));
-    if (!keys.length || keys.some(key => !key) || new Set(keys).size !== 1) {
-        throw new Error('Cannot compare results from incompatible or unknown embedding spaces');
-    }
-    if (collections.some(c => !c.calibration?.evaluationId || typeof c.calibration?.transform !== 'function')) {
-        throw new Error('Calibrated merging requires evaluation data and a calibration transform');
-    }
-
-    const priorities = { ...DEFAULT_SOURCE_PRIORITIES, ...(options.sourcePriorities || {}) };
-    const results = collections.flatMap(collection => (collection.results || []).map((result, offset) => {
-        const raw = result.rawBackendScore ?? result.metadata?.rawBackendScore ?? result.score;
-        const calibrated = collection.calibration.transform(raw);
-        return preserveResult(result, collection, offset + 1, calibrated, calibrated, priorities);
-    }));
-    results.forEach(result => { result.fusionMethod = 'calibrated_score'; });
-    results.sort(compareResults);
-    return { results, method: 'calibrated_score', heterogeneous: false, embeddingSpaces: [keys[0]] };
-}

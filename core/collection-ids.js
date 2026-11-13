@@ -415,3 +415,14 @@ export function parseRegistryKey(registryKey) {
     // Legacy format: just collectionId (no colons, or unknown prefix)
     return { backend: null, source: null, collectionId: registryKey };
 }
+
+/**
+ * Returns the bare collection ID for a registry key (backend:source:id or
+ * source:id). Non-string input is returned unchanged.
+ * @param {string} collectionId
+ * @returns {string}
+ */
+export function stripRegistryPrefix(collectionId) {
+    if (!collectionId || typeof collectionId !== 'string') return collectionId;
+    return parseRegistryKey(collectionId).collectionId;
+}

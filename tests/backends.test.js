@@ -184,7 +184,7 @@ describe('StandardBackend', () => {
             await backend.initialize(defaultSettings);
 
             expect(backend.pluginAvailable).toBe(true);
-            expect(fetchMock).toHaveBeenCalledWith('/api/plugins/similharity/health');
+            expect(fetchMock).toHaveBeenCalledWith('/api/plugins/similharity/health', expect.any(Object));
         });
 
         it('should initialize without plugin when health check fails', async () => {
@@ -683,23 +683,21 @@ describe('QdrantBackend', () => {
         });
     });
 
-    describe('_parseCollectionId', () => {
-        it('should parse new format (vh:type:id)', () => {
-            const result = backend._parseCollectionId('vh:chat:abc123');
-            expect(result.type).toBe('chat');
-            expect(result.sourceId).toBe('abc123');
+    describe('purgeVectorIndex', () => {
+        it('resolves after a successful purge', async () => {
+            fetchMock.mockResolvedValueOnce(mockFetchResponse({ success: true }));
+            await expect(backend.purgeVectorIndex('qdrant:openai:vh:chat:abc123', defaultSettings)).resolves.toBeUndefined();
+            const callBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+            expect(callBody.collectionId).toBe('vh:chat:abc123');
         });
+    });
 
-        it('should parse legacy format (vecthare_type_id)', () => {
-            const result = backend._parseCollectionId('vecthare_chat_abc123');
-            expect(result.type).toBe('chat');
-            expect(result.sourceId).toBe('abc123');
-        });
-
-        it('should handle registry key prefix', () => {
-            const result = backend._parseCollectionId('qdrant:transformers:vh:chat:abc123');
-            expect(result.type).toBe('chat');
-            expect(result.sourceId).toBe('abc123');
+    describe('queryMultipleCollections', () => {
+        it('reports a per-collection error instead of an empty success', async () => {
+            fetchMock.mockResolvedValueOnce(mockFetchResponse({ error: 'boom' }, { ok: false, status: 500, statusText: 'Internal Server Error' }));
+            const results = await backend.queryMultipleCollections(['a'], 'text', 5, 0, defaultSettings);
+            expect(results.a.hashes).toEqual([]);
+            expect(results.a.error).toContain('500');
         });
     });
 

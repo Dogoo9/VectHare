@@ -18,11 +18,10 @@ import {
     createSceneChunk,
     deleteSceneChunk,
     getCurrentCollectionId,
-    filterSceneChunks,
 } from '../core/scenes.js';
 import { getSavedHashes } from '../core/core-vector-api.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { getContext } from '../../../../extensions.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // CONSTANTS
@@ -72,25 +71,11 @@ export async function refreshSceneCache(settings) {
         } else {
             cachedSceneChunks = [];
         }
-        console.log(`VectHare Scenes: Cached ${cachedSceneChunks.length} scenes`);
+        logger.debug(`VectHare Scenes: Cached ${cachedSceneChunks.length} scenes`);
     } catch (error) {
         console.error('VectHare Scenes: Failed to refresh cache', error);
         cachedSceneChunks = [];
     }
-}
-
-/**
- * Gets cached scenes (for external use)
- */
-export function getCachedScenes() {
-    return cachedSceneChunks;
-}
-
-/**
- * Gets pending scene start (for external use)
- */
-export function getPendingSceneStart() {
-    return pendingSceneStart;
 }
 
 /**
@@ -122,15 +107,6 @@ function getSceneAtMessage(msgId) {
  */
 function getSceneStartingAt(msgId) {
     return cachedSceneChunks.find(s => s.sceneStart === msgId) || null;
-}
-
-/**
- * Checks if a message is a scene end
- * @param {number} msgId - Message index
- * @returns {object|null} The scene chunk or null
- */
-function getSceneEndingAt(msgId) {
-    return cachedSceneChunks.find(s => s.sceneEnd === msgId) || null;
 }
 
 // ============================================================================
@@ -207,11 +183,6 @@ export function attachAllMarkers() {
     messages.forEach(msg => attachMarkersToMessage(msg));
 }
 
-export function removeAllMarkers() {
-    document.querySelectorAll(`.${START_MARKER_CLASS}`).forEach(m => m.remove());
-    document.querySelectorAll(`.${END_MARKER_CLASS}`).forEach(m => m.remove());
-}
-
 // ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
@@ -225,8 +196,6 @@ function updateMessageMarkerState(messageElement, messageId) {
 
     const existingScene = getSceneAtMessage(messageId);
     const isExistingStart = getSceneStartingAt(messageId) !== null;
-    const isExistingEnd = getSceneEndingAt(messageId) !== null;
-    const isInPendingRange = pendingSceneStart !== null && messageId > pendingSceneStart;
 
     // START button visibility
     if (startButton) {
@@ -477,7 +446,7 @@ export function initializeSceneMarkers() {
             chatObserver.observe(chat, { childList: true, subtree: true });
             // Attach to any existing messages
             attachAllMarkers();
-            console.log('VectHare Scenes: Chat observer started');
+            logger.debug('VectHare Scenes: Chat observer started');
         }
     };
 
@@ -505,5 +474,5 @@ export function initializeSceneMarkers() {
         }, 200);
     });
 
-    console.log('VectHare Scenes: Markers initialized');
+    logger.debug('VectHare Scenes: Markers initialized');
 }

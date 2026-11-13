@@ -323,24 +323,6 @@ export function removeCustomPattern(id) {
     saveCleaningSettings(settings);
 }
 
-/**
- * Toggles a builtin pattern
- * @param {string} id - Builtin pattern ID
- * @param {boolean} enabled - Whether to enable
- */
-export function toggleBuiltinPattern(id, enabled) {
-    const settings = getCleaningSettings();
-    settings.enabledBuiltins = settings.enabledBuiltins || [];
-
-    if (enabled && !settings.enabledBuiltins.includes(id)) {
-        settings.enabledBuiltins.push(id);
-    } else if (!enabled) {
-        settings.enabledBuiltins = settings.enabledBuiltins.filter(x => x !== id);
-    }
-
-    saveCleaningSettings(settings);
-}
-
 // ============================================================================
 // IMPORT/EXPORT
 // ============================================================================

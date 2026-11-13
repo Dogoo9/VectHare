@@ -9,24 +9,21 @@
  * ============================================================================
  */
 
-import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, chat_metadata, extension_prompts } from '../../../../../script.js';
+import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, extension_prompts } from '../../../../../script.js';
 import { getContext } from '../../../../extensions.js';
-import { getStringHash as calculateHash, waitUntilCondition, onlyUnique } from '../../../../utils.js';
-import { isUnitStrategy } from './chunking.js';
+import { getStringHash as calculateHash, waitUntilCondition } from '../../../../utils.js';
 import { extractChatKeywords, extractBM25Keywords } from './keyword-boost.js';
 import { cleanText } from './text-cleaning.js';
 import {
     getSavedHashes,
     insertVectorItems,
     queryMultipleCollections,
-    queryActiveCollections,
-    deleteVectorItems,
-    purgeVectorIndex,
 } from './core-vector-api.js';
 import { isBackendAvailable } from '../backends/backend-manager.js';
 import { applyDecayToResults, applySceneAwareDecay } from './temporal-decay.js';
 import { isChunkDisabledByScene } from './scenes.js';
 import { registerCollection, getCollectionRegistry } from './collection-loader.js';
+import { tagChatCollection } from './chat-cleanup.js';
 import {
     isCollectionEnabled,
     filterActiveCollections,
@@ -38,8 +35,8 @@ import { buildSearchContext, filterChunksByConditions, processChunkLinks } from 
 import { getChunkMetadata, getCollectionMeta } from './collection-metadata.js';
 import { processChunkGroups, mergeVirtualLinks } from './chunk-groups.js';
 import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '../ui/search-debug.js';
-import { Queue, LRUCache } from '../utils/data-structures.js';
-import { getRequestHeaders } from '../../../../../script.js';
+import { LRUCache } from '../utils/data-structures.js';
+import '../../../../../script.js'; // side effects only
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
 import { resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
 import { fuseCollectionResults } from './collection-fusion.js';
@@ -53,6 +50,7 @@ import {
     parseCollectionId,
     parseRegistryKey,
 } from './collection-ids.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 // Hash cache for performance
 const hashCache = new LRUCache(HASH_CACHE_SIZE);
@@ -244,13 +242,13 @@ function filterSceneDisabledChunks(chunks) {
     const filtered = chunks.filter(chunk => {
         const isDisabled = isChunkDisabledByScene(chunk.hash, chunk.collectionId);
         if (isDisabled) {
-            console.debug(`VectHare: Chunk ${chunk.hash} is disabled by scene`);
+            logger.debug(`VectHare: Chunk ${chunk.hash} is disabled by scene`);
         }
         return !isDisabled;
     });
 
     if (filtered.length !== chunks.length) {
-        console.log(`VectHare: Scene filtering: ${chunks.length} → ${filtered.length} chunks (${chunks.length - filtered.length} disabled by scenes)`);
+        logger.debug(`VectHare: Scene filtering: ${chunks.length} → ${filtered.length} chunks (${chunks.length - filtered.length} disabled by scenes)`);
     }
 
     return filtered;
@@ -362,7 +360,7 @@ async function applyChunkConditions(chunks, chat, settings, trackActivations = t
         });
     }
 
-    console.log(`VectHare: Chunk conditions filtered ${filtered.length} → ${conditionFilteredChunks.length}`);
+    logger.debug(`VectHare: Chunk conditions filtered ${filtered.length} → ${conditionFilteredChunks.length}`);
     return conditionFilteredChunks;
 }
 
@@ -397,17 +395,13 @@ async function rerankWithBananaBread(query, chunks, settings) {
     const documents = chunks.map(c => c.text);
 
     try {
-        const response = await fetch('/api/plugins/similharity/rerank', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest('/rerank', { body: {
                 apiUrl,
                 apiKey: settings.bananabread_api_key || '', // Include API key for authentication
                 query,
                 documents,
                 top_k: chunks.length
-            }),
-        });
+            } });
 
         if (!response.ok) {
             console.warn('VectHare: Reranking failed, using original scores');
@@ -429,7 +423,7 @@ async function rerankWithBananaBread(query, chunks, settings) {
             return chunk;
         });
 
-        console.log(`VectHare: Reranked ${rerankedChunks.length} chunks with BananaBread`);
+        logger.debug(`VectHare: Reranked ${rerankedChunks.length} chunks with BananaBread`);
         return rerankedChunks;
     } catch (error) {
         console.warn('VectHare: Reranking error:', error.message);
@@ -438,13 +432,13 @@ async function rerankWithBananaBread(query, chunks, settings) {
 }
 
 /**
- * Synchronizes chat with vector index using simple FIFO queue
+ * Synchronizes chat with the vector index.
  *
  * How it works:
  * 1. Get all messages, get all vectorized hashes from DB
- * 2. Queue = messages not yet in DB (by hash)
- * 3. Process batch: take message, chunk it, insert chunks, remove from queue
- * 4. Repeat until queue empty
+ * 2. Pending = grouped items whose hash is not yet in the DB
+ * 3. Insert the first `batchSize` pending items in one call
+ * 4. Callers repeat until `remaining` is 0
  *
  * @param {object} settings VectHare settings
  * @param {number} batchSize Number of messages to process per call
@@ -455,9 +449,6 @@ async function rerankWithBananaBread(query, chunks, settings) {
 export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = false) {
     // Build proper collection ID using chat UUID first
     const collectionId = getChatCollectionId();
-    console.log(`🔍 VectHare DEBUG: getChatCollectionId() returned: "${collectionId}"`);
-    console.log(`🔍 VectHare DEBUG: settings.vector_backend = "${settings.vector_backend}"`);
-    console.log(`🔍 VectHare DEBUG: settings.source = "${settings.source}"`);
     if (!collectionId) {
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
@@ -477,7 +468,9 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
     try {
         await waitUntilCondition(() => !syncBlocked && !is_send_press, 1000);
     } catch {
-        syncBlocked = false; // VEC-30: Reset flag on timeout
+        // Another sync is still running (or a generation is in progress).
+        // Do NOT clear syncBlocked here: it belongs to the running sync, and
+        // clearing it would let a third caller start a concurrent sync.
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
 
@@ -494,6 +487,8 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
 
         // Step 1: What's already vectorized? (source of truth = DB)
         const existingHashes = new Set(await getSavedHashes(collectionId, settings));
+        const registryKey = `${settings.vector_backend || 'standard'}:${settings.source || 'transformers'}:${collectionId}`;
+        if (existingHashes.size > 0) tagChatCollection(registryKey);
 
         // Step 2: Build list of messages NOT in DB
         const strategy = settings.chunking_strategy || 'per_message';
@@ -521,67 +516,48 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
         const groupedItems = groupMessagesByStrategy(allMessages, strategy, strategyBatchSize, keywordLevel);
 
         // Filter out already vectorized items (by their grouped hash)
-        const queue = new Queue();
-        for (const item of groupedItems) {
-            if (!existingHashes.has(item.hash)) {
-                queue.enqueue(item);
-            }
-        }
-
-        if (queue.isEmpty()) {
+        const pending = groupedItems.filter(item => !existingHashes.has(item.hash));
+        if (pending.length === 0) {
             return { remaining: 0, messagesProcessed: 0, chunksCreated: 0 };
         }
 
-        // Step 3: Process batch
-        let itemsProcessed = 0;
+        // Step 3: Insert the next batch in a single call so the embedding
+        // provider receives one request instead of one per message.
+        const batch = pending.slice(0, batchSize);
+        const label = strategy === 'per_message' ? 'Message' : 'Group';
         let chunksCreated = 0;
         let itemsFailed = 0;
-        const label = strategy === 'per_message' ? 'Message' : 'Group';
 
-        while (!queue.isEmpty() && itemsProcessed < batchSize) {
-            const item = queue.dequeue();
-
-            try {
-                // Prepare item for insertion (add source metadata)
-                const chunks = prepareItemsForInsertion([item]);
-
-                // Insert chunks (insertVectorItems handles duplicates at DB level)
-                if (chunks.length > 0) {
-                    await insertVectorItems(collectionId, chunks, settings, (embedded, total) => {
-                        // Update progress tracker with embedding progress
-                        console.log(`[Chat Vectorization] Embedding progress callback: ${embedded}/${total}`);
-                        progressTracker.updateEmbeddingProgress(embedded, total);
-
-                        // Determine phase based on progress (0-50% = Embedding, 50-100% = Writing)
-                        const progressPercent = (embedded / total) * 100;
-                        const phase = progressPercent <= 50 ? 'Embedding' : 'Writing to database';
-                        progressTracker.updateCurrentItem(`${label} ${itemsProcessed}/${batchSize} - ${phase}: ${embedded}/${total} chunks`);
-                    });
-                    chunksCreated += chunks.length;
-
-                    // Register on first successful insert (prevents ghost collections)
-                    if (!isRegistered) {
-                        // Construct proper registry key: backend:source:collectionId
-                        const backend = settings.vector_backend || 'standard';
-                        const source = settings.source || 'transformers';
-                        const registryKey = `${backend}:${source}:${collectionId}`;
-                        console.log(`🔍 VectHare DEBUG: Registering collection with key: "${registryKey}"`);
-                        console.log(`🔍 VectHare DEBUG: Components: backend="${backend}", source="${source}", collectionId="${collectionId}"`);
-                        registerCollection(registryKey);
-                        isRegistered = true;
-                        console.log(`VectHare: Registered collection ${registryKey} after first successful insert`);
-                    }
-                }
-            } catch (itemError) {
-                // Log error but continue processing other items
-                console.warn(`VectHare: Failed to process item (hash: ${item.hash}, index: ${item.index}):`, itemError.message);
-                itemsFailed++;
-                // Don't rethrow - continue with next item
+        const insert = async (items) => {
+            await insertVectorItems(collectionId, prepareItemsForInsertion(items), settings, (embedded, total) => {
+                progressTracker.updateEmbeddingProgress(embedded, total);
+                progressTracker.updateCurrentItem(`${label}s ${embedded}/${total}`);
+            });
+            chunksCreated += items.length;
+            if (!isRegistered) {
+                // Register only after a successful insert (prevents ghost collections)
+                registerCollection(registryKey);
+                tagChatCollection(registryKey);
+                isRegistered = true;
             }
+        };
 
-            itemsProcessed++;
-            progressTracker.updateCurrentItem(`${label} ${itemsProcessed}/${batchSize}${itemsFailed > 0 ? ` (${itemsFailed} failed)` : ''}`);
+        try {
+            await insert(batch);
+        } catch (batchError) {
+            // Retry one by one so a single bad item does not block the rest.
+            console.warn(`VectHare: Batch insert failed (${batchError.message}); retrying items individually`);
+            for (const item of batch) {
+                try {
+                    await insert([item]);
+                } catch (itemError) {
+                    console.warn(`VectHare: Failed to process item (hash: ${item.hash}, index: ${item.index}):`, itemError.message);
+                    itemsFailed++;
+                }
+            }
         }
+        const itemsProcessed = batch.length;
+        const remaining = pending.length - batch.length;
 
         progressTracker.updateCurrentItem(null);
 
@@ -590,7 +566,7 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
         }
 
         return {
-            remaining: queue.size,
+            remaining,
             messagesProcessed: itemsProcessed,
             chunksCreated,
             itemsFailed
@@ -874,7 +850,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         resultNormalizationMs: normalizationMs,
         totalRetrievalMs: performance.now() - totalStart,
     };
-    console.debug('[VectHare] Retrieval timings', timings);
+    logger.debug('[VectHare] Retrieval timings', timings);
     addTrace(debugData, 'performance', 'Retrieval timings', timings);
 
     return chunksForVisualizer;
@@ -1423,96 +1399,51 @@ async function applyGroupsAndLinksStage(chunks, activeCollections, settings, deb
 }
 
 /**
- * Stage 7: Deduplicate chunks already in chat context
- * Only checks against recent messages within the context window, not entire chat history.
+ * Stage 9: Drop chunks whose source messages are already in the recent chat
+ * context, so the prompt does not repeat what the model can already see.
+ * A grouped chunk (conversation_turns / message_batch) is a duplicate only
+ * when every message it covers is still visible.
  * @param {object[]} chunks Chunks to deduplicate
  * @param {object[]} chat Current chat messages
- * @param {object} settings VectHare settings (uses deduplication_depth)
+ * @param {object} settings VectHare settings (uses deduplication_depth; 0 = whole chat)
  * @param {object} debugData Debug tracking object
- * @returns {{toInject: object[], skipped: object[]}} Chunks to inject and skipped duplicates
+ * @returns {{toInject: object[], skipped: object[]}}
  */
-function deduplicateChunks(chunks, chat, settings, debugData) {
-    // Determine how far back to check for duplicates
-    // Default to 50 messages if not specified (reasonable context window)
-    const deduplicationDepth = settings.deduplication_depth ?? 50;
+export function deduplicateChunks(chunks, chat, settings, debugData) {
+    const depth = settings.deduplication_depth ?? 50;
+    const recentMessages = depth > 0 && depth < chat.length ? chat.slice(-depth) : chat;
 
-    addTrace(debugData, 'injection', 'Starting deduplication and injection', {
-        chunksToInject: chunks.length,
-        chatLength: chat.length,
-        deduplicationDepth: deduplicationDepth
-    });
+    const visibleHashes = new Set();
+    for (const msg of recentMessages) {
+        if (msg?.mes) visibleHashes.add(getStringHash(substituteParams(getTextWithoutAttachments(msg))));
+    }
 
-    // Only check the most recent N messages (within context window)
-    const recentMessages = deduplicationDepth > 0 && deduplicationDepth < chat.length
-        ? chat.slice(-deduplicationDepth)
-        : chat;
-
-    logger.debug(`[VectHare Dedup] Building hash set from ${recentMessages.length} recent messages (depth: ${deduplicationDepth})`);
-    logger.debug(`[VectHare Dedup] Total chat length: ${chat.length}, checking duplicates in last ${recentMessages.length} messages`);
-
-    // Build set of hashes currently in chat context
-    const currentChatHashes = new Set();
-    const chatHashMap = new Map(); // For debugging: hash -> message preview
-
-    recentMessages.forEach((msg, idx) => {
-        if (msg.mes) {
-            const cleanedText = substituteParams(getTextWithoutAttachments(msg));
-            const hash = getStringHash(cleanedText);
-            currentChatHashes.add(hash);
-
-            // Store sample for debugging (first occurrence only)
-            // Calculate absolute index in full chat
-            const absoluteIndex = chat.length - recentMessages.length + idx;
-            if (!chatHashMap.has(hash)) {
-                chatHashMap.set(hash, {
-                    index: absoluteIndex,
-                    preview: cleanedText.substring(0, 80),
-                    isUser: msg.is_user,
-                    name: msg.name
-                });
-            }
-        }
-    });
-
-    logger.debug(`[VectHare Dedup] Built hash set with ${currentChatHashes.size} unique message hashes from recent context`);
+    const isVisible = (chunk) => {
+        if (visibleHashes.has(chunk.hash)) return true;
+        const messageHashes = chunk.metadata?.messageHashes;
+        return Array.isArray(messageHashes) && messageHashes.length > 0
+            && messageHashes.every(hash => visibleHashes.has(hash));
+    };
 
     const toInject = [];
     const skipped = [];
-
     for (const chunk of chunks) {
-        const isInChat = currentChatHashes.has(chunk.hash);
-
-        if (isInChat) {
-            const matchedMsg = chatHashMap.get(chunk.hash);
-            logger.debug(`[VectHare Dedup] ❌ SKIPPING chunk (hash: ${chunk.hash})`);
-            logger.trace('Duplicate chunk detail', { text: chunk.text, matchedMessageIndex: matchedMsg.index, matchedMessageName: matchedMsg.name, preview: matchedMsg.preview });
-            logger.debug(`  Score: ${chunk.score?.toFixed(4)}, Collection: ${chunk.collectionId}`);
-
+        if (isVisible(chunk)) {
             skipped.push(chunk);
             recordChunkFate(debugData, chunk.hash, 'injection', 'skipped',
-                'Already in current chat context - no injection needed',
-                { score: chunk.score }
-            );
+                'Already in current chat context - no injection needed', { score: chunk.score });
         } else {
-            logger.debug(`[VectHare Dedup] ✅ KEEPING chunk (hash: ${chunk.hash}, score: ${chunk.score?.toFixed(4)})`);
-            logger.trace('Kept chunk content', { text: chunk.text });
-
             toInject.push(chunk);
-            recordChunkFate(debugData, chunk.hash, 'injection', 'passed',
-                'Not in current context - will inject',
-                { score: chunk.score, collectionId: chunk.collectionId }
-            );
         }
     }
 
     addTrace(debugData, 'injection', 'Deduplication complete', {
+        deduplicationDepth: depth,
+        checkedMessages: recentMessages.length,
         totalChunks: chunks.length,
         toInject: toInject.length,
-        skippedDuplicates: skipped.length
+        skippedDuplicates: skipped.length,
     });
-
-    logger.debug(`[VectHare Dedup] FINAL: ${toInject.length} will inject, ${skipped.length} skipped as duplicates`);
-
     return { toInject, skipped };
 }
 
@@ -2012,8 +1943,8 @@ export async function rearrangeChat(chat, settings, type) {
 
         // The injection limit is deliberately enforced only now, after the last
         // ranking stage. Mandatory/group-linked members consume this same budget.
-        const chunksToInject = selectFinalChunks(chunks, finalK);
-        const skippedDuplicates = [];
+        const { toInject: freshChunks, skipped: skippedDuplicates } = deduplicateChunks(chunks, chat, settings, debugData);
+        const chunksToInject = selectFinalChunks(freshChunks, finalK);
 
         logger.debug(`[VectHare Deduplication] After deduplication: ${chunksToInject.length} to inject, ${skippedDuplicates.length} skipped`);
         if (skippedDuplicates.length > 0) {
@@ -2133,7 +2064,7 @@ export async function vectorizeAll(settings, batchSize) {
 
             // Handle disabled/blocked state
             if (result.remaining === -1) {
-                console.log('VectHare: Vectorization blocked or disabled');
+                logger.debug('VectHare: Vectorization blocked or disabled');
                 progressTracker.complete(false, 'Blocked or disabled');
                 return;
             }
@@ -2151,7 +2082,7 @@ export async function vectorizeAll(settings, batchSize) {
             );
             progressTracker.updateChunks(totalChunks);
 
-            console.log(`VectHare: Vectorization iteration ${iteration}, ${result.remaining > 0 ? result.remaining + ' remaining' : 'complete'} (${result.chunksCreated} chunks this batch)`);
+            logger.debug(`VectHare: Vectorization iteration ${iteration}, ${result.remaining > 0 ? result.remaining + ' remaining' : 'complete'} (${result.chunksCreated} chunks this batch)`);
 
             if (chatId !== getCurrentChatId()) {
                 progressTracker.complete(false, 'Chat changed during vectorization');
@@ -2161,7 +2092,7 @@ export async function vectorizeAll(settings, batchSize) {
 
         progressTracker.complete(true, `Vectorized ${processedCount} messages (${totalChunks} chunks)`);
         toastr.success('Chat vectorized successfully', 'VectHare');
-        console.log(`VectHare: ✅ Vectorization complete after ${iteration} iterations`);
+        logger.debug(`VectHare: ✅ Vectorization complete after ${iteration} iterations`);
     } catch (error) {
         console.error('VectHare: Failed to vectorize all', error);
         progressTracker.addError(error.message);
@@ -2170,26 +2101,3 @@ export async function vectorizeAll(settings, batchSize) {
     }
 }
 
-/**
- * Purges vector index for current chat
- * @param {object} settings VectHare settings
- */
-export async function purgeChatIndex(settings) {
-    if (!getCurrentChatId()) {
-        toastr.info('No chat selected', 'Purge aborted');
-        return;
-    }
-
-    const collectionId = getChatCollectionId();
-    if (!collectionId) {
-        toastr.error('Could not get collection ID', 'Purge aborted');
-        return;
-    }
-
-    if (await purgeVectorIndex(collectionId, settings)) {
-        toastr.success('Vector index purged', 'VectHare');
-        console.log('VectHare: Index purged successfully');
-    } else {
-        toastr.error('Failed to purge vector index', 'VectHare');
-    }
-}

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-    collectAdaptiveCandidates,
     resolveRetrievalBudgets,
     selectFinalChunks,
 } from '../core/retrieval-budget.js';
@@ -15,19 +14,6 @@ describe('retrieval budgets', () => {
             candidateK: 500,
             candidateKMax: 500,
         });
-    });
-
-    it('refills when disabled, duplicate, and condition-rejected leaders consume the first prefix', async () => {
-        const ranked = Array.from({ length: 10 }, (_, i) => ({ id: i, score: 1 - i / 20 }));
-        const fetchPrefix = vi.fn(limit => ranked.slice(0, limit));
-        const hardFilter = candidates => candidates.filter(c => ![0, 1, 2, 3].includes(c.id));
-
-        const result = await collectAdaptiveCandidates(fetchPrefix, hardFilter, {
-            candidateK: 4, candidateKMax: 10, finalK: 3,
-        });
-
-        expect(fetchPrefix.mock.calls.map(([limit]) => limit)).toEqual([4, 8]);
-        expect(result.map(c => c.id)).toEqual([4, 5, 6, 7]);
     });
 
     it('fills finalK from lower-ranked valid candidates after the score threshold', () => {

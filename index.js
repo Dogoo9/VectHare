@@ -13,7 +13,6 @@
 import {
     eventSource,
     event_types,
-    extension_prompt_types,
 } from '../../../../script.js';
 import {
     ModuleWorkerWrapper,
@@ -25,140 +24,27 @@ import { debounce_timeout } from '../../../constants.js';
 
 // VectHare modules - Core
 import { synchronizeChat, rearrangeChat, vectorizeAll } from './core/chat-vectorization.js';
-import { purgeAllVectorIndexes, purgeVectorIndex } from './core/core-vector-api.js';
-import { getChatCollectionId } from './core/chat-vectorization.js';
-import { getDefaultDecaySettings } from './core/temporal-decay.js';
+import { purgeDeletedChatCollections, tagOpenChatCollections } from './core/chat-cleanup.js';
+import { defaultSettings } from './core/default-settings.js';
 import { migrateOldEnabledKeys } from './core/collection-metadata.js';
 import { clearCollectionRegistry, discoverExistingCollections } from './core/collection-loader.js';
 import AsyncUtils from './utils/async-utils.js';
 
 // VectHare modules - UI
-import { renderSettings, openDiagnosticsModal, loadWebLlmModels, updateWebLlmStatus, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
+import { renderSettings, refreshAutoSyncCheckbox } from './ui/ui-manager.js';
+import { openDiagnosticsModal } from './ui/diagnostics-modal.js';
+import { loadWebLlmModels, updateWebLlmStatus } from './ui/webllm-ui.js';
 import { initializeVisualizer } from './ui/chunk-visualizer.js';
 import { initializeDatabaseBrowser } from './ui/database-browser.js';
-import { initializeSceneMarkers, updateAllMarkerStates, setSceneSettings } from './ui/scene-markers.js';
+import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';
 import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
+import { pluginRequest } from './backends/similharity-backend.js';
+import { configureLogger, logger } from './utils/logger.js';
 
 // VectHare modules - Cotton-Tales Integration
-import './core/emotion-classifier.js'; // Exposes window.VectHareEmotionClassifier
-
-// Constants
-const MODULE_NAME = 'VectHare';
-
-// Default settings
-const defaultSettings = {
-    // Core vector settings
-    source: 'transformers',
-    vector_backend: 'standard', // Backend: 'standard' (ST Vectra), 'lancedb', 'qdrant'
-    qdrant_host: 'localhost',
-    qdrant_port: 6333,
-    qdrant_url: '',
-    qdrant_api_key: '',
-    qdrant_use_cloud: false,
-    qdrant_multitenancy: false, // Use single collection with content_type field instead of separate collections
-    milvus_host: 'localhost',
-    milvus_port: 19530,
-    milvus_username: '',
-    milvus_password: '',
-    milvus_token: '',
-    milvus_address: '',
-    alt_endpoint_url: '',
-    use_alt_endpoint: false,
-    saved_endpoints: [],
-    rate_limit_calls: 5,
-    rate_limit_interval: 60, // seconds
-
-    // VEC-6: Batch insert optimization
-    insert_batch_size: 50, // Chunks per insert batch (50-100 recommended)
-    togetherai_model: 'togethercomputer/m2-bert-80M-32k-retrieval',
-    openai_model: 'text-embedding-ada-002',
-    electronhub_model: 'text-embedding-3-small',
-    openrouter_model: 'openai/text-embedding-3-large',
-    cohere_model: 'embed-english-v3.0',
-    ollama_model: 'mxbai-embed-large',
-    ollama_keep: false,
-    vllm_model: '',
-    webllm_model: '',
-    google_model: 'text-embedding-005',
-    bananabread_rerank: false,
-    bananabread_api_key: '', // Stored here since custom keys aren't returned by ST's readSecretState()
-
-    // Chat vectorization
-    enabled_chats: false,
-    chunking_strategy: 'per_message', // per_message, conversation_turns, message_batch, adaptive
-    batch_size: 4, // Messages per batch for message_batch strategy
-    depth: 2,
-    position: extension_prompt_types.IN_PROMPT,
-    protect: 5,
-    insert: 3,
-    min_chat_length: 0, // Minimum number of messages in chat before injection starts (0 = no minimum)
-    // Number of top results to retrieve from vector DB (top-K)
-    top_k: 3,
-    // Separate retrieval budgets. candidate_k=null enables adaptive overfetch.
-    candidate_k: null,
-    candidate_k_max: 500,
-    rerank_k: 50,
-    final_k: null, // Falls back to top_k for backwards compatibility.
-    query: 2,
-    chunk_size: 500, // For adaptive strategy only
-    score_threshold: 0.25,
-
-    // Deduplication settings
-    deduplication_depth: 50, // Number of recent messages to check for duplicates (0 = check all)
-
-    // Keyword scoring method
-    keyword_scoring_method: 'keyword', // 'keyword', 'bm25', or 'hybrid'
-
-    // BM25 parameters
-    bm25_k1: 1.5,  // Term frequency saturation (1.2-2.0 typical)
-    bm25_b: 0.75,  // Length normalization (0-1, 0.75 typical)
-
-    // Keyword extraction level for chat messages
-    keyword_extraction_level: 'balanced', // 'off', 'minimal', 'balanced', 'aggressive'
-
-    // Hybrid Search settings (combines vector + full-text search)
-    hybrid_search_enabled: false,       // Enable hybrid search mode
-    hybrid_fusion_method: 'heuristic_weighted', // Evaluation-selected; also 'rrf' or 'weighted'
-    hybrid_vector_weight: 0.5,          // Weight for vector scores (0-1) - used in weighted mode
-    hybrid_text_weight: 0.5,            // Weight for text/BM25 scores (0-1) - used in weighted mode
-    hybrid_rrf_k: 60,                   // RRF constant (higher = more weight to top results)
-    hybrid_native_prefer: true,         // Prefer native backend hybrid if available (Qdrant/Milvus)
-
-    // Advanced features
-    temporal_decay: getDefaultDecaySettings(),
-
-    // Global defaults for new collections
-    default_decay_enabled: false,    // Whether new collections have temporal weighting enabled
-    default_decay_type: 'decay',     // 'decay' or 'nostalgia' for new collections
-
-    // RAG Prompt Context (Global level)
-    // Wraps ALL injected content with context prompts and/or XML tags
-    rag_context: '',      // Natural language context shown before all RAG content
-    rag_xml_tag: '',      // XML tag to wrap all RAG content (e.g., "retrieved_context")
-
-    // Collection-level metadata (managed by collection-metadata.js)
-    collections: {},
-
-    // Collection registry (list of known collection IDs)
-    vecthare_collection_registry: [],
-
-    // World Info Integration
-    enabled_world_info: false,          // Enable semantic WI activation
-    world_info_threshold: 0.3,          // Score threshold for WI activation
-    world_info_top_k: 3,                // Max entries to activate per lorebook
-    world_info_query_depth: 3,          // Recent messages to use for query
-    world_info_enabled_for_all: false,  // Bypass dedup so semantic WI can also include keyword-active entries
-    world_info_max_entries: 10,         // Cap on total semantic WI entries returned for injection
-
-    // Keyword Extraction
-    custom_stopwords: '',               // Custom stopwords (comma-separated)
-
-    // Diagnostics
-    include_production_tests: false,    // Default for production diagnostics checkbox
-};
-
+import './core/emotion-classifier.js';
 // Runtime settings (merged with saved settings)
-let settings = { ...defaultSettings };
+const settings = structuredClone(defaultSettings);
 
 // Module worker for automatic syncing
 const moduleWorker = new ModuleWorkerWrapper(() => synchronizeChat(settings, getBatchSize()));
@@ -201,26 +87,31 @@ async function onPurgeClick() {
     }
 
     try {
-        const { getRequestHeaders } = await import('../../../../script.js');
+        const { saveSettingsDebounced } = await import('../../../../script.js');
 
-        // 1. Delete entire vectors folder
-        await fetch('/api/plugins/similharity/purge-all', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
+        // 1. Delete entire vectors folder (requires the Similharity plugin)
+        const response = await pluginRequest('/purge-all', { method: 'POST' });
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status} ${response.statusText}. Is the Similharity plugin installed?`);
+        }
 
-        // 2. Clear extension_settings.vecthare
+        // 2. Reset settings in place. Other modules hold a reference to the
+        // runtime `settings` object and write it back on every UI change, so
+        // clearing only extension_settings would be silently undone.
         for (const key in extension_settings.vecthare) {
             if (key !== 'enabled') {
                 delete extension_settings.vecthare[key];
             }
         }
+        for (const key of Object.keys(settings)) delete settings[key];
+        Object.assign(settings, structuredClone(defaultSettings));
+        Object.assign(extension_settings.vecthare, structuredClone(defaultSettings));
+        clearCollectionRegistry();
 
         // 3. Save settings
-        const { saveSettingsDebounced } = await import('../../../../script.js');
         saveSettingsDebounced();
 
-        toastr.success('All vector data purged', 'Purge Complete');
+        toastr.success('All vector data purged. Reload the page to refresh the settings panel.', 'Purge Complete');
 
     } catch (error) {
         console.error('VectHare: Purge failed:', error);
@@ -239,16 +130,16 @@ function onRunDiagnosticsClick() {
  * Initialize VectHare extension
  */
 jQuery(async () => {
-    console.log('VectHare: Initializing...');
+    logger.debug('VectHare: Initializing...');
 
     // Load saved settings
     if (!extension_settings.vecthare) {
-        extension_settings.vecthare = defaultSettings;
+        extension_settings.vecthare = structuredClone(defaultSettings);
     }
 
     // Merge saved settings with defaults
-    settings = {
-        ...defaultSettings,
+    Object.assign(settings, {
+        ...structuredClone(defaultSettings),
         ...extension_settings.vecthare,
         temporal_decay: {
             ...defaultSettings.temporal_decay,
@@ -258,12 +149,14 @@ jQuery(async () => {
             ...defaultSettings.collections,
             ...extension_settings.vecthare.collections
         }
-    };
+    });
+
+    configureLogger({ level: settings.log_level, content: settings.log_content === true });
 
     // Migrate old scattered enabled keys to new collections structure
     const migrationResult = migrateOldEnabledKeys();
     if (migrationResult.migrated > 0) {
-        console.log(`VectHare: Migrated ${migrationResult.migrated} old collection enabled keys`);
+        logger.debug(`VectHare: Migrated ${migrationResult.migrated} old collection enabled keys`);
     }
 
     // Render UI
@@ -306,7 +199,7 @@ jQuery(async () => {
                 }
             );
             if (collections.length > 0) {
-                console.log(`VectHare: Discovered ${collections.length} existing collections`);
+                logger.debug(`VectHare: Discovered ${collections.length} existing collections`);
             }
         } catch (err) {
             console.error('VectHare: Collection discovery failed after retries:', err.message);
@@ -338,30 +231,25 @@ jQuery(async () => {
             );
         });
     }
-    // When a chat is deleted, purge its vectors (not full purge, just that chat)
-    eventSource.on(event_types.CHAT_DELETED, async (chatId) => {
-        if (chatId) {
-            const collectionId = getChatCollectionId(chatId);
-            if (collectionId) {
-                await purgeVectorIndex(collectionId, settings);
-                console.log(`VectHare: Purged vectors for deleted chat: ${chatId}`);
+    // When a chat is deleted, remove the collections that were built from it
+    const onChatDeleted = async (chatId) => {
+        if (!chatId) return;
+        try {
+            const deleted = await purgeDeletedChatCollections(chatId, settings);
+            if (deleted.length > 0) {
+                logger.info(`VectHare: Removed ${deleted.length} collection(s) for deleted chat: ${chatId}`);
             }
+        } catch (error) {
+            console.warn(`VectHare: Failed to purge vectors for deleted chat ${chatId}:`, error);
         }
-    });
-    eventSource.on(event_types.GROUP_CHAT_DELETED, async (chatId) => {
-        if (chatId) {
-            const collectionId = getChatCollectionId(chatId);
-            if (collectionId) {
-                await purgeVectorIndex(collectionId, settings);
-                console.log(`VectHare: Purged vectors for deleted group chat: ${chatId}`);
-            }
-        }
-    });
+    };
+    eventSource.on(event_types.CHAT_DELETED, onChatDeleted);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, onChatDeleted);
 
     // When WebLLM extension is loaded, refresh the model list
     eventSource.on(event_types.EXTENSION_SETTINGS_LOADED, async (manifest) => {
         if (settings.source === 'webllm' && manifest?.display_name === 'WebLLM') {
-            console.log('VectHare: WebLLM extension loaded, refreshing models...');
+            logger.debug('VectHare: WebLLM extension loaded, refreshing models...');
             updateWebLlmStatus();
             await loadWebLlmModels(settings);
         }
@@ -369,9 +257,10 @@ jQuery(async () => {
 
     // When chat changes, refresh UI state to match settings
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        console.log('VectHare: Chat changed, refreshing UI state');
+        logger.debug('VectHare: Chat changed, refreshing UI state');
         refreshAutoSyncCheckbox(settings);
+        tagOpenChatCollections();
     });
 
-    console.log('VectHare: ✅ Initialized successfully');
+    logger.info('Initialized successfully');
 });

@@ -6,7 +6,7 @@ vi.mock('../core/embedding-migration.js', () => ({ readMigrationItems: mocks.rea
 vi.mock('../ui/progress-tracker.js', () => ({ progressTracker: new Proxy({}, { get: () => vi.fn() }) }));
 import { extension_settings } from '../../../../extensions.js';
 import { setCollectionMeta, getCollectionMeta, setCollectionEnabled } from '../core/collection-metadata.js';
-import { exportCollection, exportMultipleCollections, importCollection, importMultipleCollections, validateImportData } from '../core/collection-export.js';
+import { exportCollection, importCollection, validateImportData } from '../core/collection-export.js';
 import { fingerprint, profile, probes } from './embedding-fixtures.js';
 
 beforeEach(() => { vi.clearAllMocks(); mocks.insert.mockReset(); mocks.hashes.mockResolvedValue([0]); extension_settings.vecthare = { collections: {}, chunk_metadata: {} }; vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, collections: [] }) }))); });
@@ -24,7 +24,6 @@ it('exports frozen routing, complete text/temporal metadata, stable zero hashes 
     expect(exported.embedding.fingerprint).toEqual(fingerprint());
     expect(JSON.stringify(exported)).not.toContain('secret');
     expect(JSON.stringify(exported)).not.toContain('localhost');
-    expect((await exportMultipleCollections(['standard:koboldcpp:old'], {})).collections[0].chunks[0].vector).toEqual([1, 0.5]);
 });
 it('old imports with only names and dimensions re-embed while preserving stable IDs', async () => {
     const old = { version: '1.0.0', collection: { id: 'imported' }, embedding: { source: 'koboldcpp', model: 'nomic', dimension: 2 },
@@ -45,10 +44,8 @@ it('refuses missing text before any write rather than dropping memory from old i
 });
 
 const backup = () => ({ version: '1.0.0', collection: { id: 'original', name: 'Original' }, chunks: [{ hash: 0, text: 'recoverable', index: 1 }] });
-it('rejects overwrite before purging or embedding for single and multi-imports', async () => {
+it('rejects overwrite before purging or embedding', async () => {
     await expect(importCollection(backup(), {}, { overwrite: true })).rejects.toThrow('cannot overwrite');
-    const result = await importMultipleCollections({ collections: [backup()] }, {}, { overwrite: true });
-    expect(result.failed).toBe(1);
     expect(mocks.purge).not.toHaveBeenCalled(); expect(mocks.insert).not.toHaveBeenCalled();
 });
 it('refuses an existing metadata destination without modifying its collection settings', async () => {

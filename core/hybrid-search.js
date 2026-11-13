@@ -18,6 +18,7 @@ import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 import { collectionStorageKey, storageSettings } from './collection-portability.js';
 
 import { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS, heuristicWeightedFusion } from './fusion-algorithms.js';
+import { logger } from '../utils/logger.js';
 export { DEFAULT_RRF_K, HEURISTIC_WEIGHTED_DEFAULTS } from './fusion-algorithms.js';
 
 function getHeuristicSettings(settings) {
@@ -56,7 +57,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
     const preferNative = settings.hybrid_native_prefer !== false;
     if (!queryVector && preferNative && fusionMethod !== 'heuristic_weighted' &&
         backend.supportsHybridSearch && backend.supportsHybridSearch()) {
-        console.log(`[HybridSearch] Using native hybrid search (${backend.constructor.name})`);
+        logger.debug(`[HybridSearch] Using native hybrid search (${backend.constructor.name})`);
         try {
             return await backend.hybridQuery(collectionId, searchText, topK, settings, {
                 vectorWeight,
@@ -71,7 +72,7 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
     }
 
     // Client-side fusion for backends without native support
-    console.log(`[HybridSearch] Using client-side ${fusionMethod.toUpperCase()} fusion`);
+    logger.debug(`[HybridSearch] Using client-side ${fusionMethod.toUpperCase()} fusion`);
     return clientSideHybridSearch(
         backend,
         collectionId,
@@ -108,8 +109,8 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     const expandedTopK = Math.max(topK, Math.min(topK * 3, 100));
 
     // 1. Vector search
-    console.log(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);
-    console.log(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
+    logger.debug(`[HybridSearch] Fetching ${expandedTopK} vector results from collection: ${collectionId}`);
+    logger.debug(`[HybridSearch] Backend: ${backend.constructor.name}, Source: ${settings.source}`);
 
     let vectorResults = { hashes: [], metadata: [] };
     let vectorError = null;
@@ -121,7 +122,7 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
             settings,
             queryVector
         );
-        console.log(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
+        logger.debug(`[HybridSearch] Raw vector results:`, vectorResults ? `hashes=${vectorResults.hashes?.length}, metadata=${vectorResults.metadata?.length}` : 'null');
     } catch (error) {
         if (queryVector) throw error;
         vectorError = error;
@@ -161,20 +162,20 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     // 4. Fuse results
     let fusedResults;
     if (fusionMethod === 'rrf') {
-        console.log(`[HybridSearch] Applying RRF fusion (k=${rrfK})...`);
+        logger.debug(`[HybridSearch] Applying RRF fusion (k=${rrfK})...`);
         fusedResults = reciprocalRankFusion(
             [vectorResultsToRanked(vectorResults), bm25Results],
             rrfK
         );
     } else if (fusionMethod === 'heuristic_weighted') {
-        console.log('[HybridSearch] Applying legacy heuristic-weighted fusion...');
+        logger.debug('[HybridSearch] Applying legacy heuristic-weighted fusion...');
         fusedResults = heuristicWeightedFusion(
             [vectorResultsToRanked(vectorResults), bm25Results],
             rrfK,
             heuristicSettings
         );
     } else if (fusionMethod === 'weighted') {
-        console.log(`[HybridSearch] Applying weighted fusion (α=${vectorWeight}, β=${textWeight})...`);
+        logger.debug(`[HybridSearch] Applying weighted fusion (α=${vectorWeight}, β=${textWeight})...`);
         fusedResults = weightedCombination(
             vectorResultsToScored(vectorResults),
             bm25Results,
@@ -189,19 +190,19 @@ async function clientSideHybridSearch(backend, collectionId, searchText, topK, s
     const topResults = fusedResults.slice(0, topK);
     const finalScore = result => fusionMethod === 'rrf' ? result.rrfScore : result.combinedScore;
 
-    console.log(`[HybridSearch] Returning ${topResults.length} fused results`);
+    logger.debug(`[HybridSearch] Returning ${topResults.length} fused results`);
     if (topResults.length > 0) {
         // Log score distribution for debugging
         const scores = topResults.map(r => finalScore(r) || 0);
-        console.log(`[HybridSearch] Score distribution: min=${Math.min(...scores).toFixed(4)}, max=${Math.max(...scores).toFixed(4)}`);
-        console.log(`[HybridSearch] Top 3 results:`);
+        logger.debug(`[HybridSearch] Score distribution: min=${Math.min(...scores).toFixed(4)}, max=${Math.max(...scores).toFixed(4)}`);
+        logger.debug(`[HybridSearch] Top 3 results:`);
         topResults.slice(0, 3).forEach((r, i) => {
             const score = (finalScore(r) || 0).toFixed(4);
             const vRank = r.ranks?.vector || 'N/A';
             const tRank = r.ranks?.text || 'N/A';
             const vScore = (r.vectorScore || 0).toFixed(4);
             const tScore = (r.textScore || r.bm25Score || 0).toFixed(4);
-            console.log(`  [${i + 1}] finalScore=${score}, vectorRank=${vRank}, textRank=${tRank}, vectorScore=${vScore}, textScore=${tScore}`);
+            logger.debug(`  [${i + 1}] finalScore=${score}, vectorRank=${vRank}, textRank=${tRank}, vectorScore=${vScore}, textScore=${tScore}`);
         });
     }
 

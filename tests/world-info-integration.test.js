@@ -23,9 +23,21 @@ vi.mock('../core/../../../../../script.js', () => ({
     getCurrentChatId: vi.fn(() => 'chat123'),
 }));
 
-vi.mock('../core/core-vector-api.js', () => ({
-    queryCollection: vi.fn(),
-}));
+vi.mock('../core/core-vector-api.js', () => {
+    // The module issues one multi-collection query; route it through a
+    // per-collection mock so tests can assert on each lorebook's request.
+    const queryCollection = vi.fn();
+    const queryMultipleCollections = vi.fn(async (ids, query, topK, _threshold, settings) => Object.fromEntries(
+        await Promise.all(ids.map(async id => {
+            try {
+                return [id, await queryCollection(id, query, topK, settings)];
+            } catch (error) {
+                return [id, { hashes: [], metadata: [], error: error.message }];
+            }
+        })),
+    ));
+    return { queryCollection, queryMultipleCollections };
+});
 
 vi.mock('../core/collection-metadata.js', () => ({
     getCollectionMeta: vi.fn(),

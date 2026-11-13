@@ -21,10 +21,8 @@ import {
     DEFAULT_BASE_WEIGHT,
     extractLorebookKeywords,
     extractTextKeywords,
-    extractTextKeywordsSimple,
     extractChatKeywords,
     extractBM25Keywords,
-    extractSmartKeywords,
     applyKeywordBoost,
     getOverfetchAmount,
     applyKeywordBoosts,
@@ -367,34 +365,6 @@ describe('extractTextKeywords', () => {
         const keywords = extractTextKeywords(text, { level: 'aggressive' }).map(k => k.text);
         expect(keywords.some(k => k === 'divine_time' || k === 'space_warp')).toBe(true);
     });
-// ============================================================================
-// extractTextKeywordsSimple Tests
-// ============================================================================
-
-describe('extractTextKeywordsSimple', () => {
-    it('should return array of strings only', () => {
-        const text = 'Dragon dragon dragon wizard wizard castle';
-        const keywords = extractTextKeywordsSimple(text, { level: 'aggressive' });
-
-        expect(Array.isArray(keywords)).toBe(true);
-        for (const kw of keywords) {
-            expect(typeof kw).toBe('string');
-        }
-    });
-
-    it('should return same keywords as extractTextKeywords but as strings', () => {
-        const text = 'Dragon dragon dragon wizard wizard castle';
-        const weightedKeywords = extractTextKeywords(text, { level: 'aggressive' });
-        const simpleKeywords = extractTextKeywordsSimple(text, { level: 'aggressive' });
-
-        expect(simpleKeywords).toEqual(weightedKeywords.map(k => k.text));
-    });
-});
-
-// ============================================================================
-// extractChatKeywords Tests
-// ============================================================================
-
 describe('extractChatKeywords', () => {
     it('should return empty array for null/undefined/empty text', () => {
         expect(extractChatKeywords(null)).toEqual([]);
@@ -594,110 +564,6 @@ describe('extractBM25Keywords', () => {
         }
     });
 });
-
-// ============================================================================
-// extractSmartKeywords Tests
-// ============================================================================
-
-describe('extractSmartKeywords', () => {
-    it('should return empty array for null/undefined/empty text', () => {
-        expect(extractSmartKeywords(null)).toEqual([]);
-        expect(extractSmartKeywords(undefined)).toEqual([]);
-        expect(extractSmartKeywords('')).toEqual([]);
-        expect(extractSmartKeywords('   ')).toEqual([]);
-    });
-
-    it('should return empty array when level is off', () => {
-        const text = 'The wizard cast a powerful magic spell on the dragon.';
-        const keywords = extractSmartKeywords(text, { level: 'off' });
-        expect(keywords).toEqual([]);
-    });
-
-    it('should extract keywords with type information', () => {
-        const text = 'Gandalf the wizard met the dragon. The dragon was powerful.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive' });
-        expect(keywords.length).toBeGreaterThan(0);
-        expect(keywords[0]).toHaveProperty('text');
-        expect(keywords[0]).toHaveProperty('weight');
-        expect(keywords[0]).toHaveProperty('type');
-    });
-
-    it('should detect named entities', () => {
-        const text = 'I met Gandalf yesterday. Gandalf told me about Mordor.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive', detectEntities: true });
-        const entityKeywords = keywords.filter(k => k.isEntity);
-        expect(entityKeywords.length).toBeGreaterThan(0);
-    });
-
-    it('should detect acronyms', () => {
-        const text = 'The FBI and NASA worked together. The CIA also helped.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive', detectEntities: true });
-        const keywordTexts = keywords.map(k => k.text);
-        expect(keywordTexts.some(t => ['fbi', 'nasa', 'cia'].includes(t))).toBe(true);
-    });
-
-    it('should skip entity detection when disabled', () => {
-        const text = 'I met Gandalf yesterday.';
-        const withEntities = extractSmartKeywords(text, { level: 'aggressive', detectEntities: true });
-        const withoutEntities = extractSmartKeywords(text, { level: 'aggressive', detectEntities: false });
-
-        const entityCount1 = withEntities.filter(k => k.type === 'entity' || k.type === 'acronym').length;
-        const entityCount2 = withoutEntities.filter(k => k.type === 'entity' || k.type === 'acronym').length;
-
-        expect(entityCount1).toBeGreaterThanOrEqual(entityCount2);
-    });
-
-    it('should apply position weighting', () => {
-        const text = 'Dragon appears first. Then comes a lot of text. '.repeat(20) + 'Wizard appears at the end.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive', positionWeighting: true });
-
-        // Keywords should have positionWeight property
-        for (const kw of keywords) {
-            expect(kw).toHaveProperty('positionWeight');
-            expect(kw.positionWeight).toBeGreaterThan(0);
-        }
-    });
-
-    it('should skip position weighting when disabled', () => {
-        const text = 'Dragon appears first. Wizard appears later.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive', positionWeighting: false });
-
-        // Position weights should all be 1.0
-        for (const kw of keywords) {
-            expect(kw.positionWeight).toBe(1.0);
-        }
-    });
-
-    it('should combine entity detection with TF-IDF', () => {
-        const text = 'Gandalf the wizard. Gandalf is powerful. Gandalf casts spells.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive' });
-
-        const gandalf = keywords.find(k => k.text === 'gandalf');
-        if (gandalf) {
-            // Should have combined type
-            expect(gandalf.type).toMatch(/entity|tfidf/);
-        }
-    });
-
-    it('should respect maxKeywords limit', () => {
-        const text = 'Dragon wizard spell phoenix castle kingdom knight warrior'.repeat(10);
-        const keywords = extractSmartKeywords(text, { level: 'aggressive', maxKeywords: 5 });
-        expect(keywords.length).toBeLessThanOrEqual(5);
-    });
-
-    it('should sort by score descending', () => {
-        const text = 'Dragon dragon dragon. Wizard wizard. Castle.';
-        const keywords = extractSmartKeywords(text, { level: 'aggressive' });
-
-        for (let i = 1; i < keywords.length; i++) {
-            expect(keywords[i - 1].weight).toBeGreaterThanOrEqual(keywords[i].weight);
-        }
-    });
-});
-
-// ============================================================================
-// applyKeywordBoost Tests
-// ============================================================================
 
 describe('applyKeywordBoost', () => {
     it('should return unchanged results for null/undefined inputs', () => {
@@ -938,22 +804,6 @@ describe('applyKeywordBoosts', () => {
 // ============================================================================
 
 describe('Edge Cases', () => {
-    it('should handle very long text without crashing', () => {
-        const longText = 'Dragon wizard castle knight '.repeat(10000);
-
-        expect(() => extractTextKeywords(longText, { level: 'aggressive' })).not.toThrow();
-        expect(() => extractBM25Keywords(longText, { level: 'aggressive' })).not.toThrow();
-        expect(() => extractSmartKeywords(longText, { level: 'aggressive' })).not.toThrow();
-    });
-
-    it('should handle text with special characters', () => {
-        const text = 'The dragon!!! cast a spell??? on the wizard... @#$%^&*()';
-
-        expect(() => extractTextKeywords(text)).not.toThrow();
-        expect(() => extractBM25Keywords(text)).not.toThrow();
-        expect(() => extractSmartKeywords(text)).not.toThrow();
-    });
-
     it('should handle unicode text', () => {
         const text = 'The dragon 龍 breathes fire 火. The wizard 巫師 casts spells.';
 

@@ -8,7 +8,10 @@ import { extension_settings } from '../../../../extensions.js';
 import { QdrantBackend } from '../backends/qdrant.js';
 import { StandardBackend } from '../backends/standard.js';
 import { getBackend } from '../backends/backend-manager.js';
-import { duplicateCollectionToQdrant } from '../core/collection-duplicate.js';
+import { duplicateCollection } from '../core/collection-duplicate.js';
+
+const duplicateCollectionToQdrant = (key, name, settings, options = {}) =>
+    duplicateCollection(key, name, settings, { ...options, targetBackend: 'qdrant' });
 import { getCollectionMeta, setCollectionMeta, setCollectionEnabled, getChunkMetadata, saveChunkMetadata, deleteChunkMetadata } from '../core/collection-metadata.js';
 import { collectionMutation } from '../core/collection-runtime.js';
 

@@ -18,14 +18,13 @@
  */
 
 import { extension_settings } from '../../../../extensions.js';
-import { getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { saveSettingsDebounced } from '../../../../../script.js';
 import { getSavedHashes, insertVectorItems } from './core-vector-api.js';
 import {
     getCollectionMeta,
     setCollectionMeta,
     getChunkMetadata,
     saveChunkMetadata,
-    getAllChunkMetadata,
 } from './collection-metadata.js';
 import {
     registerCollection,
@@ -37,6 +36,8 @@ import { collectionMutation, physicalCollectionId, resolveCollectionSettings } f
 import { parseRegistryKey } from './collection-ids.js';
 import { getModelField } from './providers.js';
 import { compareEmbeddingFingerprints, compareEmbeddingProbes, storageSettings } from './collection-portability.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // CONSTANTS
@@ -47,9 +48,6 @@ const EXPORT_VERSION = '1.0.0';
 
 /** File extension for VectHare exports */
 export const EXPORT_FILE_EXTENSION = '.vecthare.json';
-
-/** Maximum chunks to export at once (for progress updates) */
-const EXPORT_BATCH_SIZE = 100;
 
 // ============================================================================
 // EXPORT FUNCTIONS
@@ -242,48 +240,6 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
 }
 
 /**
- * Exports multiple collections to a single file
- * @param {string[]} collectionIds - Collections to export
- * @param {object} settings - VectHare settings
- * @returns {Promise<object>} Export data with multiple collections
- */
-export async function exportMultipleCollections(collectionIds, settings) {
-    progressTracker.show('Exporting Collections', collectionIds.length, 'Collections');
-
-    const exports = [];
-    const errors = [];
-
-    for (let i = 0; i < collectionIds.length; i++) {
-        const collectionId = collectionIds[i];
-        progressTracker.updateProgress(i + 1, `Exporting: ${collectionId}`);
-        progressTracker.updateCurrentItem(collectionId);
-
-        try {
-            exports.push(await exportCollection(collectionId, settings));
-        } catch (error) {
-            console.error(`VectHare Export: Failed to export ${collectionId}:`, error);
-            errors.push({ collectionId, error: error.message });
-        }
-    }
-
-    progressTracker.complete(errors.length === 0, `Exported ${exports.length}/${collectionIds.length} collections`);
-
-    return {
-        version: EXPORT_VERSION,
-        exportDate: new Date().toISOString(),
-        generator: 'VectHare',
-        type: 'multi',
-        collections: exports,
-        errors: errors,
-        stats: {
-            totalCollections: exports.length,
-            totalChunks: exports.reduce((sum, e) => sum + e.chunks.length, 0),
-            failedCollections: errors.length,
-        },
-    };
-}
-
-/**
  * Downloads export data as a JSON file
  * @param {object} exportData - The export data object
  * @param {string} filename - Optional filename (without extension)
@@ -306,7 +262,7 @@ export function downloadExport(exportData, filename = null) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    console.log(`VectHare Export: Downloaded ${finalFilename}`);
+    logger.debug(`VectHare Export: Downloaded ${finalFilename}`);
 }
 
 // ============================================================================
@@ -408,10 +364,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
     return collectionMutation(collectionId, settings, async () => {
     settings = storageSettings(settings);
     const backendName = settings.vector_backend || 'standard';
-    const response = await fetch('/api/plugins/similharity/chunks/insert', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
+    const response = await pluginRequest('/chunks/insert', { body: {
             backend: backendName === 'standard' ? 'vectra' : backendName,
             collectionId: collectionId,
             source: settings.source || 'transformers',
@@ -423,8 +376,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
                 vector: c.vector, // Pre-computed vector!
                 metadata: c.metadata || {},
             })),
-        }),
-    });
+        } });
 
     if (!response.ok) {
         const error = await response.text();
@@ -443,7 +395,7 @@ async function reserveImportTarget(collectionId, settings, options) {
     if (Object.keys(extension_settings.vecthare?.collections || {}).some(k => parseRegistryKey(k).collectionId === collectionId) || getCollectionRegistry().some(k => parseRegistryKey(k).collectionId === collectionId)) {
         throw new Error('Import target already exists. Choose a new ID; the original was not modified.');
     }
-    const response = await fetch('/api/plugins/similharity/collections', { headers: getRequestHeaders() });
+    const response = await pluginRequest('/collections');
     if (!response.ok) throw new Error('Safe import requires Similharity collection discovery to check for collisions.');
     const data = await response.json();
     if (!data.success || !Array.isArray(data.collections)) throw new Error('Cannot verify that the import target is unused.');
@@ -533,7 +485,7 @@ export async function importCollection(exportData, settings, options = {}) {
             progress.updateProgress(3, `Inserting ${preparedChunks.length} chunks (using existing vectors)...`);
             try {
                 await insertChunksWithVectors(collectionId, preparedChunks, settings);
-                console.log(`VectHare Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
+                logger.debug(`VectHare Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
             } catch (error) {
                 throw new Error(`Failed to insert chunks: ${error.message}`);
             }
@@ -542,7 +494,7 @@ export async function importCollection(exportData, settings, options = {}) {
             progress.updateProgress(3, `Embedding ${preparedChunks.length} chunks...`);
             try {
                 await insertVectorItems(collectionId, preparedChunks, settings);
-                console.log(`VectHare Import: Embedded and inserted ${preparedChunks.length} chunks`);
+                logger.debug(`VectHare Import: Embedded and inserted ${preparedChunks.length} chunks`);
             } catch (error) {
                 throw new Error(`Failed to embed chunks: ${error.message}`);
             }
@@ -625,66 +577,6 @@ export async function importCollection(exportData, settings, options = {}) {
         progress.complete(false, 'Import failed');
         throw error;
     }
-}
-
-/**
- * Imports multiple collections from a multi-export file
- * @param {object} multiExportData - Multi-collection export data
- * @param {object} settings - VectHare settings
- * @param {object} options - Import options
- * @returns {Promise<{ success: boolean, imported: number, failed: number, results: object[] }>}
- */
-export async function importMultipleCollections(multiExportData, settings, options = {}) {
-    const collections = multiExportData.collections || [];
-
-    if (collections.length === 0) {
-        throw new Error('No collections in export file');
-    }
-
-    progressTracker.show('Importing Collections', collections.length, 'Collections');
-
-    const results = [];
-    let imported = 0;
-    let failed = 0;
-
-    for (let i = 0; i < collections.length; i++) {
-        const exportItem = collections[i];
-        const collectionId = exportItem.collection?.id;
-
-        progressTracker.updateProgress(i + 1, `Importing: ${collectionId || 'unknown'}`);
-        progressTracker.updateCurrentItem(collectionId || `Collection ${i + 1}`);
-
-        try {
-            // Don't show nested progress tracker
-            const result = await importCollectionSilent(exportItem, settings, options);
-            results.push(result);
-            imported++;
-        } catch (error) {
-            console.error(`VectHare Import: Failed to import ${collectionId}:`, error);
-            results.push({
-                success: false,
-                collectionId,
-                error: error.message,
-            });
-            failed++;
-        }
-    }
-
-    progressTracker.complete(failed === 0, `Imported ${imported}/${collections.length} collections`);
-
-    return {
-        success: failed === 0,
-        imported,
-        failed,
-        results,
-    };
-}
-
-/**
- * Silent import (no progress tracker) for batch operations
- */
-async function importCollectionSilent(exportData, settings, options = {}) {
-    return await importCollection(exportData, settings, { ...options, silent: true });
 }
 
 // ============================================================================

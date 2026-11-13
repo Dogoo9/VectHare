@@ -23,6 +23,7 @@ import {
     importPatterns,
     testPattern,
 } from '../core/text-cleaning.js';
+import { escapeHtml } from '../utils/html.js';
 
 /**
  * Opens the Text Cleaning Manager modal
@@ -203,12 +204,6 @@ function renderCustomPatterns(patterns) {
 /**
  * Escapes HTML entities
  */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 /**
  * Parses a regex string in /pattern/flags format (like ST's native regex)

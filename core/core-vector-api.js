@@ -22,7 +22,7 @@
  * ============================================================================
  */
 
-import { getRequestHeaders } from '../../../../../script.js';
+import '../../../../../script.js'; // side effects only
 import { extension_settings, modules } from '../../../../extensions.js';
 import { secret_state } from '../../../../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
@@ -36,12 +36,11 @@ import {
     getSecretKey,
     requiresApiKey,
     requiresUrl,
-    getUrlProviders
 } from './providers.js';
 import { applyKeywordBoosts, getOverfetchAmount } from './keyword-boost.js';
 import { applyBM25Scoring } from './bm25-scorer.js';
 import { hybridSearch } from './hybrid-search.js';
-import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, purgeAllLexicalIndexes, searchLexicalIndex } from './lexical-index.js';
+import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 import { assertWritableEmbedding, collectionStorageKey, storageSettings } from './collection-portability.js';
 import { embedLocal } from '../providers/local-embeddings.js';
 import { resolveCollectionSettings, physicalCollectionId, embeddingProfileKey, collectionMutation } from './collection-runtime.js';
@@ -50,14 +49,14 @@ import { completeLexicalCoverage } from './lexical-index.js';
 import AsyncUtils from '../utils/async-utils.js';
 import StringUtils from '../utils/string-utils.js';
 import {
-    RATE_LIMIT_CALLS,
-    RATE_LIMIT_WINDOW_MS,
     API_TIMEOUT_MS,
     RETRY_MAX_ATTEMPTS,
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
-    RETRY_BACKOFF_MULTIPLIER
+    RETRY_BACKOFF_MULTIPLIER,
 } from './constants.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 // Get shared WebLLM provider singleton (lazy-initialized)
 const webllmProvider = getWebLlmProvider();
@@ -73,6 +72,70 @@ function requirePrecomputedForReassignment(settings, routed, vector = null, back
     if (routed.source !== settings.source && !vector) {
         throw new Error('This embedding reassignment requires companion-server support for precomputed vectors with an independent storage namespace. Use lexical-only retrieval or rebuild instead.');
     }
+}
+
+/** Storage-routed settings carrying the server-side embedding request args. */
+function routedSettings(settings) {
+    const serverEmbeds = !usesClientEmbeddings(settings) && settings.retrieval_mode !== 'lexical_only';
+    return storageSettings({ ...settings, inference_request_args: serverEmbeds ? getVectorsRequestBody({}, settings) : {} });
+}
+
+/**
+ * Embeds the query in the browser for client-side sources. Returns null when
+ * the backend embeds server-side. A failed client embedding must not fall back
+ * to another inference provider, so it throws.
+ * @returns {Promise<number[]|null>}
+ */
+async function embedQueryVector(searchText, settings) {
+    if (!usesClientEmbeddings(settings)) return null;
+    const additionalArgs = await getAdditionalArgs([searchText], settings, null, 'query');
+    const vector = additionalArgs.embeddings?.[searchText];
+    if (!vector) throw new Error('Client embedding returned no query vector.');
+    return vector;
+}
+
+/** Lexical-only search result for one collection. */
+function lexicalResult(collectionId, searchText, topK, settings) {
+    const matches = searchLexicalIndex(collectionStorageKey(collectionId, settings), searchText, topK);
+    return {
+        hashes: matches.map(item => item.hash),
+        metadata: matches.map(item => ({ ...item.metadata, bm25Score: item.bm25Score, retrievalMode: 'lexical-only', score: undefined })),
+    };
+}
+
+/** Applies keyword/BM25 scoring to raw backend results and returns { hashes, metadata }. */
+function scoreBackendResults(rawResults, searchText, topK, settings, overfetchAmount) {
+    const resultsForBoost = rawResults.metadata.map((meta, idx) => ({
+        hash: meta.hash || rawResults.hashes[idx],
+        score: meta.score || 0,
+        metadata: meta,
+        text: meta.text || '',
+    }));
+    const finalResults = scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmount);
+    return {
+        hashes: finalResults.map(r => r.hash),
+        metadata: finalResults.map(r => ({
+            ...r.metadata,
+            score: r.score,
+            originalScore: r.originalScore || r.vectorScore,
+            keywordBoost: r.keywordBoost,
+            bm25Score: r.bm25Score,
+            normalizedBM25: r.normalizedBM25,
+            vectorScore: r.vectorScore,
+            matchedKeywords: r.matchedKeywords,
+            matchedKeywordsWithWeights: r.matchedKeywordsWithWeights,
+            keywordBoosted: r.keywordBoosted,
+            explain: {
+                retrieval: 'vector',
+                vectorScore: r.vectorScore ?? r.originalScore ?? r.score,
+                keywordBoost: r.keywordBoost ?? 1,
+                keywordBoostConfidence: r.keywordBoostConfidence ?? 0,
+                keywordOverlapRatio: r.keywordOverlapRatio ?? 0,
+                matchedKeywords: r.matchedKeywords || [],
+                finalScore: r.score,
+            },
+        })),
+    };
 }
 
 /**
@@ -125,7 +188,7 @@ class DynamicRateLimiter {
             const waitTime = (oldest + intervalMs) - now;
 
             if (waitTime > 0) {
-                console.log(`VectHare: Rate limit reached. Waiting ${Math.round(waitTime / 1000)}s...`);
+                logger.debug(`VectHare: Rate limit reached. Waiting ${Math.round(waitTime / 1000)}s...`);
                 await AsyncUtils.sleep(waitTime + 100); // Add small buffer
             }
 
@@ -157,29 +220,28 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+/**
+ * True for transient failures worth retrying: network errors, timeouts, rate
+ * limits and 502/503/504. Other HTTP errors (400, 401, 404, 500...) fail fast.
+ * @param {Error} error
+ * @returns {boolean}
+ */
+export function isRetryableError(error) {
+    const message = error?.message?.toLowerCase() || '';
+    // Browser network failures surface as TypeError ("Failed to fetch",
+    // "NetworkError when attempting...", "Load failed").
+    if (error?.name === 'TypeError' && /fetch|network|load failed/.test(message)) return true;
+    if (/^(failed to fetch|load failed)$/.test(message)) return true;
+    return /network ?error|timed? ?out|timeout|econnreset|econnrefused|suspended|rate limit|too many requests|\b(429|502|503|504)\b/.test(message);
+}
+
 // Retry configuration for transient failures (matches AsyncUtils.retry signature)
 const RETRY_CONFIG = {
     maxAttempts: RETRY_MAX_ATTEMPTS,
     delay: RETRY_INITIAL_DELAY_MS,
     maxDelay: RETRY_MAX_DELAY_MS,
     backoffFactor: RETRY_BACKOFF_MULTIPLIER,
-    shouldRetry: (error) => {
-        // Retry on network errors and rate limits
-        const message = error?.message?.toLowerCase() || '';
-        const isRetryable =
-            message.includes('network') ||
-            message.includes('timeout') ||
-            message.includes('failed to fetch') ||
-            message.includes('fetch') ||
-            message.includes('suspended') ||
-            message.includes('429') ||
-            message.includes('rate limit') ||
-            message.includes('too many requests') ||
-            message.includes('502') ||
-            message.includes('503') ||
-            message.includes('504');
-        return isRetryable;
-    }
+    shouldRetry: isRetryableError,
 };
 
 /**
@@ -544,17 +606,13 @@ async function getSavedHashesResolved(collectionId, settings, includeMetadata = 
     // Use unified chunks API to get full metadata (works with all backends)
     try {
         const backendName = routed.vector_backend || 'standard';
-        const response = await fetch('/api/plugins/similharity/chunks/list', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest('/chunks/list', { body: {
                 backend: backendName === 'standard' ? 'vectra' : backendName,
                 collectionId: collectionId,
                 source: routed.source || 'transformers',
                 model: routed.model || '',
                 limit: 10000
-            })
-        });
+            } });
 
         if (response.ok) {
             const data = await response.json();
@@ -585,7 +643,7 @@ async function getSavedHashesResolved(collectionId, settings, includeMetadata = 
  */
 async function insertVectorItemsResolved(collectionId, items, settings, onProgress = null) {
     assertWritableEmbedding(settings);
-    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
+    const routed = routedSettings(settings);
     const backend = await getBackend(routed);
 
     // Sources that require client-side embedding generation
@@ -593,7 +651,7 @@ async function insertVectorItemsResolved(collectionId, items, settings, onProgre
     try {
         // If source requires client-side embeddings, use streaming approach
         if (usesClientEmbeddings(settings)) {
-            console.log(`VectHare: Streaming embeddings and writing for ${settings.source}...`);
+            logger.debug(`VectHare: Streaming embeddings and writing for ${settings.source}...`);
 
             // Extract text strings - getAdditionalArgs expects string[], not objects
             const textStrings = items.map(item => {
@@ -615,7 +673,7 @@ async function insertVectorItemsResolved(collectionId, items, settings, onProgre
             const batches = chunkArray(items, BATCH_SIZE);
 
             const hasRateLimit = settings.rate_limit_calls > 0;
-            console.log(`VectHare: Processing ${items.length} items in ${batches.length} batch(es) of up to ${BATCH_SIZE}${hasRateLimit ? ` with rate limit (Max ${settings.rate_limit_calls} calls / ${settings.rate_limit_interval}s)` : ''}`);
+            logger.debug(`VectHare: Processing ${items.length} items in ${batches.length} batch(es) of up to ${BATCH_SIZE}${hasRateLimit ? ` with rate limit (Max ${settings.rate_limit_calls} calls / ${settings.rate_limit_interval}s)` : ''}`);
 
             for (let i = 0; i < batches.length; i++) {
                 const processBatch = async () => {
@@ -664,7 +722,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
     let totalProcessed = 0;
     const totalBatches = Math.ceil(textStrings.length / EMBEDDING_BATCH_SIZE);
 
-    console.log(`VectHare: Streaming ${items.length} items in ${totalBatches} batch(es) of up to ${EMBEDDING_BATCH_SIZE}`);
+    logger.debug(`VectHare: Streaming ${items.length} items in ${totalBatches} batch(es) of up to ${EMBEDDING_BATCH_SIZE}`);
 
     // Process embeddings in batches
     for (let i = 0; i < textStrings.length; i += EMBEDDING_BATCH_SIZE) {
@@ -673,7 +731,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
         const batchItems = items.slice(i, batchEnd);
         const batchNum = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1;
 
-        console.log(`VectHare: Embedding batch ${batchNum}/${totalBatches} (items ${i + 1}-${batchEnd})`);
+        logger.debug(`VectHare: Embedding batch ${batchNum}/${totalBatches} (items ${i + 1}-${batchEnd})`);
 
         // VEC-6: Retry logic per batch instead of per chunk
         let additionalArgs;
@@ -718,7 +776,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
         }
 
         // VEC-6: Write batch to database with retry logic
-        console.log(`VectHare: Writing batch ${batchNum} to database (${itemsToWrite.length} items)`);
+        logger.debug(`VectHare: Writing batch ${batchNum} to database (${itemsToWrite.length} items)`);
         try {
             await AsyncUtils.retry(async () => {
                 requirePrecomputedForReassignment(settings, routed, itemsToWrite[0]?.vector, backend);
@@ -732,12 +790,12 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
 
         // Update progress
         if (onProgress) {
-            console.log(`[Core Vector API] Streamed ${totalProcessed}/${items.length} (${Math.round((totalProcessed / items.length) * 100)}%)`);
+            logger.debug(`[Core Vector API] Streamed ${totalProcessed}/${items.length} (${Math.round((totalProcessed / items.length) * 100)}%)`);
             onProgress(totalProcessed, items.length);
         }
     }
 
-    console.log(`VectHare: Completed streaming ${totalProcessed} items to database`);
+    logger.debug(`VectHare: Completed streaming ${totalProcessed} items to database`);
 }
 
 /**
@@ -778,109 +836,33 @@ async function deleteVectorItemsResolved(collectionId, hashes, settings) {
  * @returns {Promise<{ hashes: number[], metadata: object[]}>} - Hashes and metadata of the results
  */
 async function queryCollectionResolved(collectionId, searchText, topK, settings) {
-    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
-    const lexicalKey = collectionStorageKey(collectionId, settings);
     if (settings.retrieval_mode === 'lexical_only') {
         await requireCompleteLexical(collectionId, settings);
-        const matches = searchLexicalIndex(lexicalKey, searchText, topK);
-        return { hashes: matches.map(item => item.hash), metadata: matches.map(item => ({ ...item.metadata, bm25Score: item.bm25Score, retrievalMode: 'lexical-only', score: undefined })) };
+        return lexicalResult(collectionId, searchText, topK, settings);
     }
+    const routed = routedSettings(settings);
     const backend = await getBackend(routed);
+    const backendName = settings?.vector_backend || 'standard';
+    const queryVector = await embedQueryVector(searchText, settings);
+    requirePrecomputedForReassignment(settings, routed, queryVector, backend);
 
-    // Sources that require client-side embedding generation
-    let queryVector = null;
-
-    // If source requires client-side embeddings, generate query vector
-    if (usesClientEmbeddings(settings)) {
-        const queryItem = [searchText];
-        try {
-            const additionalArgs = await getAdditionalArgs(queryItem, settings, null, 'query');
-            // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
-            if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
-                queryVector = additionalArgs.embeddings[searchText];
-            } else {
-                // A failed client embedding must not contact another inference provider.
-                throw new Error('Client embedding returned no query vector.');
-            }
-        } catch (clientEmbedError) {
-            // Propagate local failures without server or cloud fallback.
-            throw clientEmbedError;
-        }
-    }
-
-    // Check if hybrid search is enabled
-    if (settings.hybrid_search_enabled) {
-        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
-        console.log('[VectHare] Hybrid search enabled, dispatching to hybrid search module');
-        const queryStart = Date.now();
-        try {
-            const result = await hybridSearch(collectionId, searchText, topK, routed, { queryVector });
-            const queryLatency = Date.now() - queryStart;
-            recordQuery(settings?.vector_backend || 'standard', queryLatency);
-            return result;
-        } catch (error) {
-            // VEC-18: Record query error
-            recordError(settings?.vector_backend || 'standard', error);
-            throw error;
-        }
-    }
-
-    // Standard vector search flow
-    // Overfetch to allow keyword-boosted chunks to surface
-    // Never shrink an explicit candidate request. getOverfetchAmount() is
-    // capped for ordinary top-K searches, which previously turned a request
-    // for 500 candidates into only 100 and made lower-ranked keyword entries
-    // impossible to discover.
-    const overfetchAmount = Math.max(topK, getOverfetchAmount(topK));
-    // VEC-18: Track query latency for health dashboard
     const queryStart = Date.now();
-    let rawResults;
     try {
-        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
-        rawResults = await backend.queryCollection(collectionId, searchText, overfetchAmount, routed, queryVector);
-        const queryLatency = Date.now() - queryStart;
-        recordQuery(settings?.vector_backend || 'standard', queryLatency);
+        if (settings.hybrid_search_enabled) {
+            const result = await hybridSearch(collectionId, searchText, topK, routed, { queryVector });
+            recordQuery(backendName, Date.now() - queryStart);
+            return result;
+        }
+        // Overfetch so keyword-boosted chunks can surface. Never shrink an
+        // explicit candidate request below topK.
+        const overfetchAmount = Math.max(topK, getOverfetchAmount(topK));
+        const rawResults = await backend.queryCollection(collectionId, searchText, overfetchAmount, routed, queryVector);
+        recordQuery(backendName, Date.now() - queryStart);
+        return scoreBackendResults(rawResults, searchText, topK, settings, overfetchAmount);
     } catch (error) {
-        // VEC-18: Record query error
-        recordError(settings?.vector_backend || 'standard', error);
+        recordError(backendName, error);
         throw error;
     }
-
-    // Convert to format expected by keyword boost
-    const resultsForBoost = rawResults.metadata.map((meta, idx) => ({
-        hash: meta.hash || rawResults.hashes[idx],
-        score: meta.score || 0,
-        metadata: meta,
-        text: meta.text || ''
-    }));
-
-    let finalResults = scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmount);
-
-    // Convert back to expected format
-    return {
-        hashes: finalResults.map(r => r.hash),
-        metadata: finalResults.map(r => ({
-            ...r.metadata,
-            score: r.score,
-            originalScore: r.originalScore || r.vectorScore,
-            keywordBoost: r.keywordBoost,
-            bm25Score: r.bm25Score,
-            normalizedBM25: r.normalizedBM25,
-            vectorScore: r.vectorScore,
-            matchedKeywords: r.matchedKeywords,
-            matchedKeywordsWithWeights: r.matchedKeywordsWithWeights,
-            keywordBoosted: r.keywordBoosted,
-            explain: {
-                retrieval: 'vector',
-                vectorScore: r.vectorScore ?? r.originalScore ?? r.score,
-                keywordBoost: r.keywordBoost ?? 1,
-                keywordBoostConfidence: r.keywordBoostConfidence ?? 0,
-                keywordOverlapRatio: r.keywordOverlapRatio ?? 0,
-                matchedKeywords: r.matchedKeywords || [],
-                finalScore: r.score
-            }
-        }))
-    };
 }
 
 function scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmount = null) {
@@ -932,159 +914,62 @@ function scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmou
 async function queryMultipleCollectionsResolved(collectionIds, searchText, topK, threshold, settings) {
     if (settings.retrieval_mode === 'lexical_only') {
         await Promise.all(collectionIds.map(id => requireCompleteLexical(id, settings)));
-        return Object.fromEntries(collectionIds.map(id => {
-            const matches = searchLexicalIndex(collectionStorageKey(id, settings), searchText, topK);
-            return [id, { hashes: matches.map(item => item.hash), metadata: matches.map(item => ({ ...item.metadata, bm25Score: item.bm25Score, retrievalMode: 'lexical-only', score: undefined })) }];
-        }));
+        return Object.fromEntries(collectionIds.map(id => [id, lexicalResult(id, searchText, topK, settings)]));
     }
     const totalStart = performance.now();
-    const routed = storageSettings({ ...settings, inference_request_args: usesClientEmbeddings(settings) || settings.retrieval_mode === 'lexical_only' ? {} : getVectorsRequestBody({}, settings) });
+    const routed = routedSettings(settings);
     const backend = await getBackend(routed);
+    const backendName = settings?.vector_backend || 'standard';
 
-    // Sources that require client-side embedding generation
-    let queryVector = null;
-
-    // Generate query vector once for all collections (efficiency)
+    // Embed the query once for all collections.
     const embeddingStart = performance.now();
-    if (usesClientEmbeddings(settings)) {
-        try {
-            // getAdditionalArgs expects string[], not objects
-            const additionalArgs = await getAdditionalArgs([searchText], settings, null, 'query');
-            // additionalArgs.embeddings is a Record<string, number[]> where keys are original text
-            if (additionalArgs.embeddings && additionalArgs.embeddings[searchText]) {
-                queryVector = additionalArgs.embeddings[searchText];
-            } else {
-                // A failed client embedding must not contact another inference provider.
-                throw new Error('Client embedding returned no query vector.');
-            }
-        } catch (clientEmbedError) {
-            // Propagate local failures without server or cloud fallback.
-            throw clientEmbedError;
-        }
-    }
+    const queryVector = await embedQueryVector(searchText, settings);
     const queryEmbeddingMs = performance.now() - embeddingStart;
+    requirePrecomputedForReassignment(settings, routed, queryVector, backend);
 
-    const attachTimings = (results, backendSearchMs) => {
-        Object.defineProperty(results, '_timings', {
-            value: {
-                queryEmbeddingMs,
-                backendSearchMs,
-                totalRetrievalMs: performance.now() - totalStart,
-            },
-            enumerable: false,
-        });
-        return results;
-    };
+    const withTimings = (results, backendSearchMs) => Object.defineProperty(results, '_timings', {
+        value: { queryEmbeddingMs, backendSearchMs, totalRetrievalMs: performance.now() - totalStart },
+        enumerable: false,
+    });
 
-    // Check if hybrid search is enabled - process each collection with hybrid search
+    const backendStart = performance.now();
     if (settings.hybrid_search_enabled) {
-        console.log('[VectHare] Hybrid search enabled for multi-collection query');
-        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         const processedResults = {};
-        const backendStart = performance.now();
         const concurrency = Math.max(1, Math.min(8, Number(settings.multi_query_concurrency) || 4));
         await AsyncUtils.parallel(collectionIds.map(collectionId => async () => {
+            const queryStart = Date.now();
             try {
-                const queryStart = Date.now();
                 processedResults[collectionId] = await hybridSearch(collectionId, searchText, topK, routed, { queryVector });
-                const queryLatency = Date.now() - queryStart;
-                recordQuery(settings?.vector_backend || 'standard', queryLatency);
+                recordQuery(backendName, Date.now() - queryStart);
             } catch (error) {
                 console.warn(`[VectHare] Hybrid search failed for ${collectionId}:`, error.message);
-                // VEC-18: Record error
-                recordError(settings?.vector_backend || 'standard', error);
+                recordError(backendName, error);
                 processedResults[collectionId] = { hashes: [], metadata: [], error: error.message };
             }
         }), concurrency);
-        return attachTimings(processedResults, performance.now() - backendStart);
+        return withTimings(processedResults, performance.now() - backendStart);
     }
 
-    // Standard vector search flow
-    // Get raw results from backend (with overfetch for each collection). Do not
-    // let the generic 100-result overfetch cap shrink the candidate window.
+    // Do not let the generic overfetch cap shrink the candidate window.
     const overfetchAmount = Math.max(topK, getOverfetchAmount(topK));
-    // VEC-18: Track query latency for health dashboard
     const queryStart = Date.now();
-    const backendStart = performance.now();
     let rawResults;
     try {
-        requirePrecomputedForReassignment(settings, routed, queryVector, backend);
         rawResults = await backend.queryMultipleCollections(collectionIds, searchText, overfetchAmount, threshold, routed, queryVector);
-        const queryLatency = Date.now() - queryStart;
-        recordQuery(settings?.vector_backend || 'standard', queryLatency);
+        recordQuery(backendName, Date.now() - queryStart);
     } catch (error) {
-        // VEC-18: Record query error
-        recordError(settings?.vector_backend || 'standard', error);
+        recordError(backendName, error);
         throw error;
     }
     const backendSearchMs = performance.now() - backendStart;
 
-    // Apply scoring to each collection's results
     const processedResults = {};
-
     for (const [collectionId, collectionResults] of Object.entries(rawResults)) {
-        if (!collectionResults || !collectionResults.metadata) {
-            processedResults[collectionId] = collectionResults;
-            continue;
-        }
-
-        // Convert to format expected by scoring functions
-        const resultsForBoost = collectionResults.metadata.map((meta, idx) => ({
-            hash: meta.hash || collectionResults.hashes[idx],
-            score: meta.score || 0,
-            metadata: meta,
-            text: meta.text || ''
-        }));
-
-        let finalResults = scoreResults(resultsForBoost, searchText, topK, settings, overfetchAmount);
-
-        // Convert back to expected format
-        processedResults[collectionId] = {
-            hashes: finalResults.map(r => r.hash),
-            metadata: finalResults.map(r => ({
-                ...r.metadata,
-                score: r.score,
-                originalScore: r.originalScore || r.vectorScore,
-                keywordBoost: r.keywordBoost,
-                bm25Score: r.bm25Score,
-                normalizedBM25: r.normalizedBM25,
-                vectorScore: r.vectorScore,
-                matchedKeywords: r.matchedKeywords,
-                matchedKeywordsWithWeights: r.matchedKeywordsWithWeights,
-                keywordBoosted: r.keywordBoosted
-            }))
-        };
+        processedResults[collectionId] = collectionResults?.metadata
+            ? scoreBackendResults(collectionResults, searchText, topK, settings, overfetchAmount)
+            : collectionResults;
     }
-
-    return attachTimings(processedResults, backendSearchMs);
-}
-
-/**
- * Queries multiple collections with conditional activation filtering.
- * Collections that don't meet their activation conditions are skipped.
- *
- * @param {string[]} collectionIds - Collection IDs to potentially query
- * @param {string} searchText - Text to query
- * @param {number} topK - Number of results to return
- * @param {number} threshold - Score threshold
- * @param {object} settings - VectHare settings object
- * @param {object} context - Search context (from buildSearchContext)
- * @returns {Promise<Record<string, { hashes: number[], metadata: object[] }>>} - Results mapped to collection IDs
- */
-export async function queryActiveCollections(collectionIds, searchText, topK, threshold, settings, context) {
-    // Lazy import to avoid circular dependency
-    const { filterActiveCollections } = await import('./collection-metadata.js');
-
-    // Filter collections based on their activation conditions
-    const activeCollectionIds = await filterActiveCollections(collectionIds, context);
-
-    if (activeCollectionIds.length === 0) {
-        console.log('VectHare: No collections passed activation conditions');
-        return {};
-    }
-
-    // Query only the active collections
-    return await queryMultipleCollections(activeCollectionIds, searchText, topK, threshold, settings);
+    return withTimings(processedResults, backendSearchMs);
 }
 
 /**
@@ -1099,7 +984,7 @@ async function purgeVectorIndexResolved(collectionId, settings) {
         const backend = await getBackend(routed);
         await backend.purgeVectorIndex(collectionId, routed);
         purgeLexicalIndex(collectionStorageKey(collectionId, settings));
-        console.log(`VectHare: Purged vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purged vector index for collection ${collectionId}`);
         return true;
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
@@ -1117,36 +1002,16 @@ async function purgeVectorIndexResolved(collectionId, settings) {
  */
 async function purgeFileVectorIndexResolved(collectionId, settings) {
     try {
-        console.log(`VectHare: Purging file vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purging file vector index for collection ${collectionId}`);
         const routed = storageSettings(settings);
         const backend = await getBackend(routed);
         await backend.purgeFileVectorIndex(collectionId, routed);
         purgeLexicalIndex(collectionStorageKey(collectionId, settings));
-        console.log(`VectHare: Purged vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purged vector index for collection ${collectionId}`);
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
         invalidateBackendHealth(settings?.vector_backend || 'standard', error);
         console.error('VectHare: Failed to purge file', error);
-    }
-}
-
-/**
- * Purges all vector indexes.
- * @param {object} settings VectHare settings object
- * @returns {Promise<void>}
- */
-export async function purgeAllVectorIndexes(settings) {
-    try {
-        const backend = await getBackend(settings);
-        await backend.purgeAllVectorIndexes(settings);
-        purgeAllLexicalIndexes();
-        console.log('VectHare: Purged all vector indexes');
-        toastr.success('All vector indexes purged', 'Purge successful');
-    } catch (error) {
-        // VEC-33: Invalidate health cache on operation error
-        invalidateBackendHealth(settings?.vector_backend || 'standard', error);
-        console.error('VectHare: Failed to purge all', error);
-        toastr.error('Failed to purge all vector indexes', 'Purge failed');
     }
 }
 

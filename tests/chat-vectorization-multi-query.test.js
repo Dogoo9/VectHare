@@ -36,7 +36,7 @@ vi.mock('../core/core-vector-api.js', () => ({
 
 import { extension_settings } from '../core/../../../../extensions.js';
 import { saveChunkMetadata, setCollectionMeta } from '../core/collection-metadata.js';
-import { filterDisabledChunks } from '../core/scenes.js';
+import { isChunkDisabledByScene } from '../core/scenes.js';
 import { applyDecayToResults } from '../core/temporal-decay.js';
 import {
     filterManuallyDisabledChunks,
@@ -56,7 +56,7 @@ describe('per-entry retrieval state', () => {
         const chunks = [source, copy].map(collectionId => ({ hash: 42, collectionId, score: 0.5,
             metadata: { source: 'chat', messageId: 0, enabled: false, disabled: true } }));
         expect(filterManuallyDisabledChunks(chunks).map(c => c.collectionId)).toEqual([copy]);
-        expect(filterDisabledChunks(chunks).map(c => c.collectionId)).toEqual([copy]);
+        expect(chunks.filter(c => !isChunkDisabledByScene(c.hash, c.collectionId)).map(c => c.collectionId)).toEqual([copy]);
         expect(promoteKeywordMatches(chunks, 'copy')).toBe(1);
         expect(chunks[0].keywordMatched).toBeUndefined();
         expect(chunks[1].keywordMatched).toBe(true);

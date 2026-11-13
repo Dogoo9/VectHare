@@ -12,10 +12,11 @@
 import { getCurrentChatId, getRequestHeaders } from '../../../../../script.js';
 import { getSavedHashes, purgeVectorIndex } from '../core/core-vector-api.js';
 import { getChatCollectionId } from '../core/chat-vectorization.js';
-import { getModelField, getProviderConfig } from '../core/providers.js';
+import { getModelField } from '../core/providers.js';
 import { unregisterCollection } from '../core/collection-loader.js';
 import { reciprocalRankFusion, weightedCombination } from '../core/hybrid-search.js';
 import { applyKeywordBoost, extractTextKeywords, extractLorebookKeywords } from '../core/keyword-boost.js';
+import { pluginRequest } from '../backends/similharity-backend.js';
 
 /**
  * Full cleanup for test collections - purges vectors AND unregisters from registry
@@ -107,17 +108,13 @@ export async function testEmbeddingGeneration(settings) {
         const testText = 'This is a test message for embedding generation.';
 
         // Use the dedicated get-embedding endpoint which doesn't store anything
-        const response = await fetch('/api/plugins/similharity/get-embedding', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const response = await pluginRequest('/get-embedding', { body: {
                 text: testText,
                 source: settings.source || 'transformers',
                 model: settings[getModelField(settings.source)] || null,
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            })
-        });
+            } });
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -170,10 +167,7 @@ export async function testVectorStorage(settings) {
         const backend = settings.vector_backend || 'standard';
         const backendType = backend === 'standard' ? 'vectra' : backend;
 
-        const insertResponse = await fetch('/api/plugins/similharity/chunks/insert', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const insertResponse = await pluginRequest('/chunks/insert', { body: {
                 backend: backendType,
                 collectionId: testCollectionId,
                 items: [{
@@ -185,8 +179,7 @@ export async function testVectorStorage(settings) {
                 model: settings[getModelField(settings.source)] || null,
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            })
-        });
+            } });
 
         if (!insertResponse.ok) {
             const errorText = await insertResponse.text();
@@ -319,16 +312,12 @@ export async function testVectorDimensions(settings) {
 
     try {
         // Get collection stats to see stored dimensions
-        const statsResponse = await fetch('/api/plugins/similharity/chunks/stats', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const statsResponse = await pluginRequest('/chunks/stats', { body: {
                 backend: settings.vector_backend || 'standard',
                 collectionId: collectionId,
                 source: settings.source || 'transformers',
                 model: settings[getModelField(settings.source)] || null,
-            }),
-        });
+            } });
 
         if (!statsResponse.ok) {
             // Stats endpoint not available or error - skip check
@@ -354,17 +343,13 @@ export async function testVectorDimensions(settings) {
 
         // Generate a test embedding using the dedicated endpoint (no storage)
         const testText = 'Dimension test';
-        const embeddingResponse = await fetch('/api/plugins/similharity/get-embedding', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const embeddingResponse = await pluginRequest('/get-embedding', { body: {
                 text: testText,
                 source: settings.source || 'transformers',
                 model: settings[getModelField(settings.source)] || null,
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            })
-        });
+            } });
 
         if (!embeddingResponse.ok) {
             const errorText = await embeddingResponse.text();
@@ -426,7 +411,7 @@ export async function testVectorDimensions(settings) {
  */
 export async function testTemporalDecay(settings) {
     try {
-        const { applyTemporalDecay, getDefaultDecaySettings } = await import('../core/temporal-decay.js');
+        const { applyTemporalDecay } = await import('../core/temporal-decay.js');
         const { getDefaultDecayForType } = await import('../core/collection-metadata.js');
 
         // Test with chat defaults (enabled by default)
@@ -567,31 +552,6 @@ export async function testChunkServerSync(settings, collectionId) {
 }
 
 /**
- * Fix: Clean orphaned local metadata entries
- */
-export async function fixOrphanedMetadata(orphanedHashes) {
-    try {
-        const { deleteChunkMetadata } = await import('../core/collection-metadata.js');
-
-        let cleaned = 0;
-        for (const hash of orphanedHashes) {
-            deleteChunkMetadata(hash);
-            cleaned++;
-        }
-
-        return {
-            success: true,
-            message: `Cleaned ${cleaned} orphaned metadata entries`
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Failed to clean: ${error.message}`
-        };
-    }
-}
-
-/**
  * Test: Are there duplicate hashes in the vector store?
  * Duplicates can occur from:
  * - Native ST vectors extension double-inserting
@@ -670,87 +630,6 @@ export async function testDuplicateHashes(settings, collectionId) {
             status: 'fail',
             message: `Check failed: ${error.message}`,
             category: 'production'
-        };
-    }
-}
-
-/**
- * Fix: Remove duplicate hash entries from vector store
- * Strategy: Query to get chunk text, delete all instances, re-insert one copy
- */
-export async function fixDuplicateHashes(duplicates, collectionId, settings) {
-    try {
-        const { deleteVectorItems, insertVectorItems, queryCollection } = await import('../core/core-vector-api.js');
-
-        let fixed = 0;
-        const chunksToReinsert = [];
-
-        // First, query to get the chunk data for each duplicate hash
-        // We query with minimal text to find chunks by hash
-        for (const { hash } of duplicates) {
-            try {
-                // Query with a broad search to find chunks - we'll filter by hash
-                const result = await queryCollection(collectionId, '', 1000, settings);
-
-                if (result?.metadata) {
-                    // Find chunk with this hash
-                    const chunk = result.metadata.find(m => String(m.hash) === String(hash));
-                    if (chunk) {
-                        chunksToReinsert.push({
-                            hash: chunk.hash,
-                            text: chunk.text,
-                            index: chunk.index || 0,
-                            metadata: {
-                                source: chunk.source,
-                                messageId: chunk.messageId,
-                                chunkIndex: chunk.chunkIndex,
-                                totalChunks: chunk.totalChunks,
-                                originalMessageHash: chunk.originalMessageHash
-                            }
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn(`VectHare: Failed to get data for hash ${hash}:`, e);
-            }
-        }
-
-        // Delete ALL instances of duplicate hashes
-        const hashesToDelete = duplicates.map(d => d.hash);
-        try {
-            await deleteVectorItems(collectionId, hashesToDelete, settings);
-            console.log(`VectHare: Deleted ${hashesToDelete.length} duplicate hashes`);
-        } catch (e) {
-            console.warn('VectHare: Delete failed:', e);
-            return {
-                success: false,
-                message: `Failed to delete duplicates: ${e.message}`
-            };
-        }
-
-        // Re-insert ONE copy of each
-        if (chunksToReinsert.length > 0) {
-            try {
-                await insertVectorItems(collectionId, chunksToReinsert, settings);
-                fixed = chunksToReinsert.length;
-                console.log(`VectHare: Re-inserted ${fixed} chunks (deduplicated)`);
-            } catch (e) {
-                console.warn('VectHare: Re-insert failed:', e);
-                return {
-                    success: false,
-                    message: `Deleted duplicates but failed to re-insert: ${e.message}. Re-vectorize chat to restore.`
-                };
-            }
-        }
-
-        return {
-            success: true,
-            message: `Fixed ${fixed} duplicate hashes (deleted extras, kept one copy each)`
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Failed to fix duplicates: ${error.message}`
         };
     }
 }
@@ -858,10 +737,7 @@ export async function testPluginEmbeddingGeneration(settings) {
         const testText = 'Plugin embedding generation test';
 
         // Try to insert WITHOUT providing a vector - the plugin must generate it
-        const insertResponse = await fetch('/api/plugins/similharity/chunks/insert', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const insertResponse = await pluginRequest('/chunks/insert', { body: {
                 backend: backend,
                 collectionId: testCollectionId,
                 items: [{
@@ -874,8 +750,7 @@ export async function testPluginEmbeddingGeneration(settings) {
                 model: settings[getModelField(settings.source)] || null,
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            }),
-        });
+            } });
 
         if (!insertResponse.ok) {
             const errorText = await insertResponse.text();
@@ -888,10 +763,7 @@ export async function testPluginEmbeddingGeneration(settings) {
         }
 
         // Verify the vector was stored by querying
-        const queryResponse = await fetch('/api/plugins/similharity/chunks/query', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
+        const queryResponse = await pluginRequest('/chunks/query', { body: {
                 backend: backend,
                 collectionId: testCollectionId,
                 searchText: testText,
@@ -900,8 +772,7 @@ export async function testPluginEmbeddingGeneration(settings) {
                 model: settings[getModelField(settings.source)] || null,
                 // Include provider-specific params (apiUrl, apiKey for BananaBread, etc.)
                 ...getPluginProviderParams(settings),
-            }),
-        });
+            } });
 
         let querySuccess = false;
         if (queryResponse.ok) {

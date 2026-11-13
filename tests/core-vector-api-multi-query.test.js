@@ -62,3 +62,15 @@ describe('core multi-collection query embedding', () => {
         expect(mocks.backendQuery).not.toHaveBeenCalled();
     });
 });
+
+describe('isRetryableError', () => {
+    it('retries transient failures only', async () => {
+        const { isRetryableError } = await import('../core/core-vector-api.js');
+        expect(isRetryableError(new TypeError('Failed to fetch'))).toBe(true);
+        expect(isRetryableError(new Error('Request timed out'))).toBe(true);
+        expect(isRetryableError(new Error('Upstream returned 503 Service Unavailable'))).toBe(true);
+        expect(isRetryableError(new Error('429 Too Many Requests'))).toBe(true);
+        expect(isRetryableError(new Error('[LanceDB] Failed to fetch hashes: 400 Bad Request'))).toBe(false);
+        expect(isRetryableError(new Error('401 Unauthorized'))).toBe(false);
+    });
+});
