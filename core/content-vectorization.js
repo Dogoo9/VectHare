@@ -28,6 +28,7 @@ import { cleanText, cleanMessages } from './text-cleaning.js';
 import { progressTracker } from '../ui/progress-tracker.js';
 import { extension_settings, getContext } from '../../../../extensions.js';
 import { getStringHash } from '../../../../utils.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Main entry point for content vectorization
@@ -69,7 +70,7 @@ export async function vectorizeContent({ contentType, source, settings }) {
         const chunkLengths = chunks.map(c => (typeof c === 'string' ? c : c.text || '').length);
         const maxChunkLen = Math.max(...chunkLengths);
         const avgChunkLen = Math.round(chunkLengths.reduce((a, b) => a + b, 0) / chunkLengths.length);
-        console.log(`VectHare: Chunked "${sourceName}" into ${chunks.length} chunks (avg: ${avgChunkLen} chars, max: ${maxChunkLen} chars)`);
+        logger.debug(`VectHare: Chunked "${sourceName}" into ${chunks.length} chunks (avg: ${avgChunkLen} chars, max: ${maxChunkLen} chars)`);
 
         progressTracker.updateChunks(chunks.length);
 
@@ -107,7 +108,7 @@ export async function vectorizeContent({ contentType, source, settings }) {
         try {
             await insertVectorItems(collectionId, hashedChunks, vecthareSettings, (embedded, total) => {
             // Update progress with streaming count
-            console.log(`[Content Vectorization] Processing progress callback: ${embedded}/${total}`);
+            logger.debug(`[Content Vectorization] Processing progress callback: ${embedded}/${total}`);
             progressTracker.updateEmbeddingProgress(embedded, total);
 
             // Streaming approach: embedding and writing happen together
@@ -144,7 +145,7 @@ export async function vectorizeContent({ contentType, source, settings }) {
 
         // Register collection in the registry so it's discoverable
         registerCollection(collectionId);
-        console.log(`VectHare: Registered collection ${collectionId}`);
+        logger.debug(`VectHare: Registered collection ${collectionId}`);
 
         progressTracker.complete(true, `Vectorized ${hashedChunks.length} chunks`);
 
@@ -291,7 +292,7 @@ async function loadLorebookContent(lorebookName, context) {
 
         const entries = Object.values(data.entries).filter(e => e.content);
 
-        console.log(`VectHare: Loaded lorebook "${lorebookName}" with ${entries.length} entries`);
+        logger.debug(`VectHare: Loaded lorebook "${lorebookName}" with ${entries.length} entries`);
 
         return {
             content: entries,

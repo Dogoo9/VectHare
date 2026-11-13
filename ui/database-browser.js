@@ -74,6 +74,7 @@ import {
 } from "../core/png-export.js";
 import { escapeHtml } from "../utils/html.js";
 import { pluginRequest } from '../backends/similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 // Plugin availability cache
 let pluginAvailable = null;
@@ -129,7 +130,7 @@ let bulkEventsBound = false;
  */
 export function initializeDatabaseBrowser(settings) {
   browserState.settings = settings;
-  console.log("VectHare Database Browser: Initialized");
+  logger.debug("VectHare Database Browser: Initialized");
 }
 
 /**
@@ -137,7 +138,7 @@ export function initializeDatabaseBrowser(settings) {
  */
 export async function openDatabaseBrowser() {
   if (browserState.isOpen) {
-    console.log("VectHare Database Browser: Already open");
+    logger.debug("VectHare Database Browser: Already open");
     return;
   }
 
@@ -159,7 +160,7 @@ export async function openDatabaseBrowser() {
 
   // Show modal
   $("#vecthare_database_browser_modal").fadeIn(200);
-  console.log("VectHare Database Browser: Opened");
+  logger.debug("VectHare Database Browser: Opened");
 }
 
 /**
@@ -182,7 +183,7 @@ export function closeDatabaseBrowser() {
   browserState.isOpen = false;
   // Reset event bound flags for clean rebind on next open
   resetEventFlags();
-  console.log("VectHare Database Browser: Closed");
+  logger.debug("VectHare Database Browser: Closed");
 }
 
 /**
@@ -653,7 +654,7 @@ async function refreshCollections() {
     const actualIds = browserState.collections.map((c) => c.id);
     const cleanupResult = cleanupOrphanedMeta(actualIds);
     if (cleanupResult.removed > 0) {
-      console.log(
+      logger.debug(
         `VectHare: Cleaned up ${cleanupResult.removed} orphaned metadata entries`,
       );
     }
@@ -1137,7 +1138,7 @@ function bindCollectionCardEvents() {
   $(".vecthare-action-visualize")
     .off("click")
     .on("click", async function (e) {
-      console.log("test");
+      logger.debug("test");
       e.stopPropagation();
       const collectionKey = $(this).data("collection-key");
       const collection = findCollectionByKey(collectionKey);
@@ -1173,7 +1174,7 @@ function bindCollectionCardEvents() {
           limit: 1000, // Get first 1000 chunks
         };
 
-        console.log("VectHare DB Browser: Requesting chunks with:", requestBody);
+        logger.debug("VectHare DB Browser: Requesting chunks with:", requestBody);
 
         const response = await pluginRequest('/chunks/list', { body: requestBody });
 
@@ -3336,7 +3337,7 @@ function renderSearchResults(results, query, originalResults = null) {
   $(".vecthare-action-visualize")
     .off("click")
     .on("click", async function (e) {
-      console.log("test");
+      logger.debug("test");
       e.stopPropagation();
       const collectionKey = $(this).data("collection-key");
       const collection = findCollectionByKey(collectionKey);

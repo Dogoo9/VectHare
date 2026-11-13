@@ -15,6 +15,7 @@ import { getModelField } from '../core/providers.js';
 import { VECTOR_LIST_LIMIT } from '../core/constants.js';
 import { stripRegistryPrefix } from '../core/collection-ids.js';
 import AsyncUtils from '../utils/async-utils.js';
+import { logger } from '../utils/logger.js';
 
 export const PLUGIN_API = '/api/plugins/similharity';
 
@@ -184,7 +185,7 @@ export class SimilharityBackend extends VectorBackend {
         }
 
         await this._afterInsert(collectionId, items, settings);
-        console.debug(`VectHare ${this.label}: Inserted ${items.length} vectors into ${collectionId}`);
+        logger.debug(`VectHare ${this.label}: Inserted ${items.length} vectors into ${collectionId}`);
     }
 
     async deleteVectorItems(collectionId, hashes, settings) {

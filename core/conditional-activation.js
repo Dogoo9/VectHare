@@ -11,6 +11,7 @@
  */
 
 import { matchesTextPattern } from './plain-text-matcher.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // EXPRESSIONS EXTENSION INTEGRATION
@@ -37,13 +38,13 @@ async function initExpressionsExtension() {
         expressionsExtensionStatus.available = true;
         expressionsExtensionStatus.enabled = true;
         expressionsExtensionStatus.lastCheck = Date.now();
-        console.log('VectHare Conditions: Character Expressions extension loaded for emotion detection');
+        logger.debug('VectHare Conditions: Character Expressions extension loaded for emotion detection');
     } catch (e) {
         expressionsExtensionStatus.available = false;
         expressionsExtensionStatus.enabled = false;
         expressionsExtensionStatus.error = e.message;
         expressionsExtensionStatus.lastCheck = Date.now();
-        console.log('VectHare Conditions: Character Expressions extension not available, using keyword-based emotion detection');
+        logger.debug('VectHare Conditions: Character Expressions extension not available, using keyword-based emotion detection');
     }
 }
 
@@ -387,7 +388,7 @@ function evaluateScoreThresholdCondition(rule, context) {
     const passes = chunkScore >= threshold;
 
     if (!passes) {
-        console.log(`VectHare: Chunk ${context.currentChunkHash} score ${chunkScore.toFixed(3)} below threshold ${threshold}`);
+        logger.debug(`VectHare: Chunk ${context.currentChunkHash} score ${chunkScore.toFixed(3)} below threshold ${threshold}`);
     }
 
     return passes;
@@ -455,7 +456,7 @@ function evaluateFrequencyCondition(rule, context) {
 
     // Check max activations
     if (chunkHistory.count >= maxActivations) {
-        console.log(`VectHare Conditions: Chunk ${chunkHash} reached max activations (${maxActivations})`);
+        logger.debug(`VectHare Conditions: Chunk ${chunkHash} reached max activations (${maxActivations})`);
         return false;
     }
 
@@ -463,7 +464,7 @@ function evaluateFrequencyCondition(rule, context) {
     if (cooldownMessages > 0 && chunkHistory.lastActivation !== null) {
         const messagesSinceLastActivation = context.messageCount - chunkHistory.lastActivation;
         if (messagesSinceLastActivation < cooldownMessages) {
-            console.log(`VectHare Conditions: Chunk ${chunkHash} on cooldown (${messagesSinceLastActivation}/${cooldownMessages} messages)`);
+            logger.debug(`VectHare Conditions: Chunk ${chunkHash} on cooldown (${messagesSinceLastActivation}/${cooldownMessages} messages)`);
             return false;
         }
     }
@@ -545,9 +546,9 @@ function evaluateEmotionCondition(rule, context) {
                 );
 
                 if (expressionsResult) {
-                    console.log(`VectHare Conditions: Expressions match: "${detectedEmotion}" matches target [${targetEmotions.join(', ')}]`);
+                    logger.debug(`VectHare Conditions: Expressions match: "${detectedEmotion}" matches target [${targetEmotions.join(', ')}]`);
                 } else {
-                    console.log(`VectHare Conditions: Expressions detected "${detectedEmotion}" but not in targets [${targetEmotions.join(', ')}]`);
+                    logger.debug(`VectHare Conditions: Expressions detected "${detectedEmotion}" but not in targets [${targetEmotions.join(', ')}]`);
                 }
             }
         } catch (error) {
@@ -566,14 +567,14 @@ function evaluateEmotionCondition(rule, context) {
             const found = matchesEmotionPatterns(targetEmotion, emotionText);
 
             if (found) {
-                console.log(`VectHare Conditions: Pattern match: "${targetEmotion}" found in recent messages`);
+                logger.debug(`VectHare Conditions: Pattern match: "${targetEmotion}" found in recent messages`);
             }
 
             return found;
         });
 
         if (!patternsResult) {
-            console.log(`VectHare Conditions: No pattern match for [${targetEmotions.join(', ')}]`);
+            logger.debug(`VectHare Conditions: No pattern match for [${targetEmotions.join(', ')}]`);
         }
     }
 
@@ -896,7 +897,7 @@ export function filterChunksByConditions(chunks, baseContext) {
         return evaluateConditions(chunk, chunkContext);
     });
 
-    console.log(`VectHare Conditions: Filtered ${chunks.length} chunks to ${filtered.length} based on conditions`);
+    logger.debug(`VectHare Conditions: Filtered ${chunks.length} chunks to ${filtered.length} based on conditions`);
 
     return filtered;
 }

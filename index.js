@@ -38,6 +38,7 @@ import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';
 import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
 import { pluginRequest } from './backends/similharity-backend.js';
+import { configureLogger, logger } from './utils/logger.js';
 
 // VectHare modules - Cotton-Tales Integration
 import './core/emotion-classifier.js';// Default settings
@@ -150,6 +151,7 @@ const defaultSettings = {
 
     // Diagnostics
     include_production_tests: false,    // Default for production diagnostics checkbox
+    log_level: 'info',                  // Console verbosity: error | warn | info | debug | trace
 };
 
 // Runtime settings (merged with saved settings)
@@ -239,7 +241,7 @@ function onRunDiagnosticsClick() {
  * Initialize VectHare extension
  */
 jQuery(async () => {
-    console.log('VectHare: Initializing...');
+    logger.debug('VectHare: Initializing...');
 
     // Load saved settings
     if (!extension_settings.vecthare) {
@@ -260,10 +262,12 @@ jQuery(async () => {
         }
     });
 
+    configureLogger({ level: settings.log_level, content: settings.log_content === true });
+
     // Migrate old scattered enabled keys to new collections structure
     const migrationResult = migrateOldEnabledKeys();
     if (migrationResult.migrated > 0) {
-        console.log(`VectHare: Migrated ${migrationResult.migrated} old collection enabled keys`);
+        logger.debug(`VectHare: Migrated ${migrationResult.migrated} old collection enabled keys`);
     }
 
     // Render UI
@@ -306,7 +310,7 @@ jQuery(async () => {
                 }
             );
             if (collections.length > 0) {
-                console.log(`VectHare: Discovered ${collections.length} existing collections`);
+                logger.debug(`VectHare: Discovered ${collections.length} existing collections`);
             }
         } catch (err) {
             console.error('VectHare: Collection discovery failed after retries:', err.message);
@@ -344,7 +348,7 @@ jQuery(async () => {
         try {
             const deleted = await purgeDeletedChatCollections(chatId, settings);
             if (deleted.length > 0) {
-                console.log(`VectHare: Removed ${deleted.length} collection(s) for deleted chat: ${chatId}`);
+                logger.info(`VectHare: Removed ${deleted.length} collection(s) for deleted chat: ${chatId}`);
             }
         } catch (error) {
             console.warn(`VectHare: Failed to purge vectors for deleted chat ${chatId}:`, error);
@@ -356,7 +360,7 @@ jQuery(async () => {
     // When WebLLM extension is loaded, refresh the model list
     eventSource.on(event_types.EXTENSION_SETTINGS_LOADED, async (manifest) => {
         if (settings.source === 'webllm' && manifest?.display_name === 'WebLLM') {
-            console.log('VectHare: WebLLM extension loaded, refreshing models...');
+            logger.debug('VectHare: WebLLM extension loaded, refreshing models...');
             updateWebLlmStatus();
             await loadWebLlmModels(settings);
         }
@@ -364,10 +368,10 @@ jQuery(async () => {
 
     // When chat changes, refresh UI state to match settings
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        console.log('VectHare: Chat changed, refreshing UI state');
+        logger.debug('VectHare: Chat changed, refreshing UI state');
         refreshAutoSyncCheckbox(settings);
         tagOpenChatCollections();
     });
 
-    console.log('VectHare: ✅ Initialized successfully');
+    logger.info('Initialized successfully');
 });

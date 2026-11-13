@@ -8,6 +8,7 @@
 
 import { isChunkTemporallyBlind } from './collection-metadata.js';
 import { DEFAULT_DECAY_HALF_LIFE, DEFAULT_DECAY_FLOOR, DEFAULT_NOSTALGIA_MAX_BOOST } from './constants.js';
+import { logger } from '../utils/logger.js';
 
 const DEFAULT_LINEAR_DECAY_RATE = 0.01;
 const DEFAULT_LINEAR_NOSTALGIA_RATE = 0.005;
@@ -182,7 +183,7 @@ export function applyNostalgiaToResults(chunks, currentMessageId, nostalgiaSetti
     });
 
     const affectedCount = boosted.filter(c => c.nostalgiaApplied).length;
-    console.log(`🕰️ [Nostalgia] Applied nostalgia boost to ${affectedCount} chat chunks (${blindCount} temporally blind, skipped)`);
+    logger.debug(`🕰️ [Nostalgia] Applied nostalgia boost to ${affectedCount} chat chunks (${blindCount} temporally blind, skipped)`);
 
     return boosted;
 }
@@ -236,7 +237,7 @@ export function applyDecayToResults(chunks, currentMessageId, decaySettings) {
     });
 
     const affectedCount = decayed.filter(c => c.decayApplied).length;
-    console.log(`⏳ [Decay] Applied temporal decay to ${affectedCount} chat chunks (${blindCount} temporally blind, skipped)`);
+    logger.debug(`⏳ [Decay] Applied temporal decay to ${affectedCount} chat chunks (${blindCount} temporally blind, skipped)`);
 
     return decayed;
 }
@@ -325,7 +326,7 @@ export function applySceneAwareDecay(chunks, currentMessageId, scenes, decaySett
     });
 
     const affectedCount = decayed.filter(c => c.sceneAwareDecay).length;
-    console.log(`⏳ [Decay] Applied scene-aware decay to ${affectedCount} chunks (${blindCount} temporally blind, skipped)`);
+    logger.debug(`⏳ [Decay] Applied scene-aware decay to ${affectedCount} chunks (${blindCount} temporally blind, skipped)`);
 
     return decayed;
 }

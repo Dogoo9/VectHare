@@ -15,6 +15,7 @@
  */
 
 import { SimilharityBackend, pluginRequest } from './similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 const MULTITENANCY_COLLECTION = 'vecthare_multitenancy';
 /** Operations that are tenant-filtered in multitenancy mode. */
@@ -38,7 +39,7 @@ export class QdrantBackend extends SimilharityBackend {
         const config = settings.qdrant_use_cloud
             ? { url: settings.qdrant_url || null, apiKey: settings.qdrant_api_key || null, host: null, port: null }
             : { host: settings.qdrant_host || 'localhost', port: settings.qdrant_port || 6333, url: null, apiKey: null };
-        console.log(settings.qdrant_use_cloud
+        logger.debug(settings.qdrant_use_cloud
             ? `VectHare: Initializing Qdrant Cloud: ${config.url}`
             : `VectHare: Initializing local Qdrant: ${config.host}:${config.port}`);
 
@@ -47,7 +48,7 @@ export class QdrantBackend extends SimilharityBackend {
             const errorBody = await response.text().catch(() => 'No response body');
             throw new Error(`[Qdrant] Failed to initialize Qdrant: ${response.status} ${response.statusText} - ${errorBody}`);
         }
-        console.log('VectHare: Using Qdrant backend (production-grade vector search)');
+        logger.debug('VectHare: Using Qdrant backend (production-grade vector search)');
     }
 
     _target(collectionId, settings, op) {

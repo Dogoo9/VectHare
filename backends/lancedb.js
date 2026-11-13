@@ -8,6 +8,7 @@
  */
 
 import { SimilharityBackend, pluginRequest } from './similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 export class LanceDBBackend extends SimilharityBackend {
     constructor() {
@@ -20,7 +21,7 @@ export class LanceDBBackend extends SimilharityBackend {
             const errorBody = await response.text().catch(() => 'No response body');
             throw new Error(`Failed to initialize LanceDB: ${response.status} ${response.statusText} - ${errorBody}`);
         }
-        console.log('VectHare: Using LanceDB backend (disk-based, scalable)');
+        logger.debug('VectHare: Using LanceDB backend (disk-based, scalable)');
     }
 
     async purgeAllVectorIndexes(settings) {

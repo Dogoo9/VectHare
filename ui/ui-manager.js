@@ -26,6 +26,7 @@ import { getModelField } from '../core/providers.js';
 import { getChunkingStrategies } from '../core/content-types.js';
 import { getAlternativeEndpointHtml, bindAlternativeEndpointControls } from './endpoint-presets.js';
 import { pluginRequest } from '../backends/similharity-backend.js';
+import { configureLogger, logger } from '../utils/logger.js';
 
 /**
  * Applies the current settings snapshot without overwriting collection metadata
@@ -47,7 +48,7 @@ function applySettingsSnapshot(settingsSnapshot) {
  * @param {Function} callbacks.onRunDiagnostics - Called when "Run Diagnostics" is clicked
  */
 export function renderSettings(containerId, settings, callbacks) {
-    console.log('VectHare UI: Rendering settings...');
+    logger.debug('VectHare UI: Rendering settings...');
 
     const html = `
         <div id="vecthare_settings">
@@ -773,6 +774,18 @@ export function renderSettings(containerId, settings, callbacks) {
                             </label>
                             <small class="vecthare_hint">Tests actual embedding generation, storage, and retrieval (slower but thorough)</small>
 
+                            <label for="vecthare_log_level" style="margin-top: 12px;">
+                                <small>Console Log Level</small>
+                            </label>
+                            <select id="vecthare_log_level" class="vecthare-select">
+                                <option value="error">Errors only</option>
+                                <option value="warn">Warnings</option>
+                                <option value="info">Info (default)</option>
+                                <option value="debug">Debug</option>
+                                <option value="trace">Trace (very verbose)</option>
+                            </select>
+                            <small class="vecthare_hint">How much VectHare writes to the browser console. Use Debug when reporting a problem.</small>
+
                         </div>
                     </div>
 
@@ -916,9 +929,9 @@ export function renderSettings(containerId, settings, callbacks) {
 
     // Sanity debug: confirm the generated HTML contains the lock button marker
     try {
-        console.log(`VectHare: renderSettings built HTML contains lock marker:`, String(html).indexOf('vecthare_lock_collection') >= 0);
+        logger.debug(`VectHare: renderSettings built HTML contains lock marker:`, String(html).indexOf('vecthare_lock_collection') >= 0);
         const target = document.getElementById(containerId);
-        console.log(`VectHare: renderSettings target container exists:`, !!target, 'containerId=', containerId);
+        logger.debug(`VectHare: renderSettings target container exists:`, !!target, 'containerId=', containerId);
     } catch (e) {
         console.warn('VectHare: renderSettings pre-append debug failed', e);
     }
@@ -927,13 +940,13 @@ export function renderSettings(containerId, settings, callbacks) {
 
     // Debug: log presence of lock button after rendering and observe for later appearance
     try {
-        console.log(`VectHare: renderSettings appended to ${containerId}. lock button present:`, !!document.getElementById('vecthare_lock_collection'));
+        logger.debug(`VectHare: renderSettings appended to ${containerId}. lock button present:`, !!document.getElementById('vecthare_lock_collection'));
         if (!document.getElementById('vecthare_lock_collection')) {
             const containerEl = document.getElementById(containerId);
             if (containerEl && window.MutationObserver) {
                 const mo = new MutationObserver((mutations, obs) => {
                     if (document.getElementById('vecthare_lock_collection')) {
-                        console.log('VectHare: lock button appeared in DOM');
+                        logger.debug('VectHare: lock button appeared in DOM');
                         obs.disconnect();
                     }
                 });
@@ -956,7 +969,7 @@ export function renderSettings(containerId, settings, callbacks) {
     // Initialize health dashboard
     initializeHealthDashboard();
 
-    console.log('VectHare UI: Settings rendered');
+    logger.debug('VectHare UI: Settings rendered');
 }
 
 /**
@@ -1665,7 +1678,7 @@ function bindSettingsEvents(settings, callbacks) {
                     // Connect to selected collection
                     const selected = result.selectedCollection;
                     toastr.success(`Connected to collection with ${selected.chunkCount} chunks`, 'Auto-Sync Enabled');
-                    console.log(`VectHare: Auto-sync enabled - connected to ${selected.collectionId} (${selected.chunkCount} chunks)`);
+                    logger.debug(`VectHare: Auto-sync enabled - connected to ${selected.collectionId} (${selected.chunkCount} chunks)`);
                 } else if (result.action === 'revectorize') {
                     // User wants to start fresh - open vectorizer
                     $checkbox.prop('checked', false);
@@ -1682,7 +1695,7 @@ function bindSettingsEvents(settings, callbacks) {
             } else {
                 toastr.success('Auto-sync enabled for this chat');
             }
-            console.log(`VectHare: Chat auto-sync for ${collectionId}: ${enabling ? 'enabled' : 'disabled'}`);
+            logger.debug(`VectHare: Chat auto-sync for ${collectionId}: ${enabling ? 'enabled' : 'disabled'}`);
         });
 
         // Collection lock handled inside Database Browser per-collection settings
@@ -1754,7 +1767,7 @@ function bindSettingsEvents(settings, callbacks) {
                 $('#vecthare_milvus_settings').hide();
             }
 
-            console.log(`VectHare: Vector backend changed to ${settings.vector_backend}`);
+            logger.debug(`VectHare: Vector backend changed to ${settings.vector_backend}`);
             // Reset health cache so new backend gets properly initialized
             resetBackendHealth();
         });
@@ -1777,7 +1790,7 @@ function bindSettingsEvents(settings, callbacks) {
             }
 
             // Reset backend health to force re-initialization with new config
-            console.log('VectHare: Qdrant mode changed, forcing re-initialization...');
+            logger.debug('VectHare: Qdrant mode changed, forcing re-initialization...');
             resetBackendHealth('qdrant');
 
             // Proactively reinitialize if Qdrant is the current backend
@@ -1917,7 +1930,7 @@ function bindSettingsEvents(settings, callbacks) {
             applySettingsSnapshot(settings);
             saveSettingsDebounced();
             toggleProviderSettings(settings.source, settings);
-            console.log(`VectHare: Embedding provider changed to ${settings.source}`);
+            logger.debug(`VectHare: Embedding provider changed to ${settings.source}`);
             // Reset health cache since provider change may affect backend connectivity
             resetBackendHealth();
         });
@@ -1962,7 +1975,7 @@ function bindSettingsEvents(settings, callbacks) {
             } else {
                 $('#vecthare_bm25_params').hide();
             }
-            console.log(`VectHare: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
+            logger.debug(`VectHare: Keyword scoring method changed to ${settings.keyword_scoring_method}`);
         });
 
     // Show/hide BM25 params based on initial setting
@@ -2007,7 +2020,7 @@ function bindSettingsEvents(settings, callbacks) {
             applySettingsSnapshot(settings);
             saveSettingsDebounced();
             $('#vecthare_hybrid_params').toggle(enabled);
-            console.log(`VectHare: Hybrid search ${enabled ? 'enabled' : 'disabled'}`);
+            logger.debug(`VectHare: Hybrid search ${enabled ? 'enabled' : 'disabled'}`);
         });
     // Initialize visibility
     $('#vecthare_hybrid_params').toggle(settings.hybrid_search_enabled || false);
@@ -2023,7 +2036,7 @@ function bindSettingsEvents(settings, callbacks) {
             const isWeighted = settings.hybrid_fusion_method === 'weighted';
             $('#vecthare_hybrid_weights').toggle(isWeighted);
             $('#vecthare_hybrid_rrf_settings').toggle(!isWeighted);
-            console.log(`VectHare: Hybrid fusion method changed to ${settings.hybrid_fusion_method}`);
+            logger.debug(`VectHare: Hybrid fusion method changed to ${settings.hybrid_fusion_method}`);
         });
     // Initialize visibility based on current method
     const isWeightedMethod = (settings.hybrid_fusion_method || 'heuristic_weighted') === 'weighted';
@@ -2199,20 +2212,20 @@ function bindSettingsEvents(settings, callbacks) {
             const activeEntries = [];
             const cfg = window.extension_settings?.vecthare || settings;
 
-            console.log('VectHare: Running semantic WI test with messages:', recentMessages);
+            logger.debug('VectHare: Running semantic WI test with messages:', recentMessages);
 
             // Primary: use initialized hooks if available
             if (window.VectHare_WorldInfo && typeof window.VectHare_WorldInfo.getSemanticEntries === 'function') {
                 const entries = await window.VectHare_WorldInfo.getSemanticEntries(recentMessages, activeEntries, cfg);
-                console.log('VectHare: Semantic WI test results (via window hooks):', entries);
+                logger.debug('VectHare: Semantic WI test results (via window hooks):', entries);
                 toastr.info(`Semantic WI test completed - ${entries.length} entries (see console)`);
 
                 // If no entries found, provide extended diagnostics to help debug
                 if (!entries || entries.length === 0) {
                     try {
-                        console.log('VectHare: No semantic entries — dumping registry and per-collection query info...');
+                        logger.debug('VectHare: No semantic entries — dumping registry and per-collection query info...');
                         const registry = window.extension_settings?.vecthare?.vecthare_collection_registry || settings.vecthare_collection_registry || [];
-                        console.log('VectHare: Collection registry:', registry);
+                        logger.debug('VectHare: Collection registry:', registry);
 
                         const coreApi = await import('../core/core-vector-api.js');
                         const metaMod = await import('../core/collection-metadata.js');
@@ -2221,13 +2234,13 @@ function bindSettingsEvents(settings, callbacks) {
                             try {
                                 if (!collKey.includes('lorebook')) continue; // focus on lorebooks
                                 const meta = metaMod.getCollectionMeta(collKey);
-                                console.log(`VectHare: Collection meta for ${collKey}:`, meta);
+                                logger.debug(`VectHare: Collection meta for ${collKey}:`, meta);
 
                                 // Check saved hashes (true=include metadata)
                                 if (coreApi.getSavedHashes) {
                                     try {
                                         const saved = await coreApi.getSavedHashes(collKey, cfg, true);
-                                        console.log(`VectHare: getSavedHashes for ${collKey}:`, saved && saved.hashes ? saved.hashes.length + ' hashes' : saved);
+                                        logger.debug(`VectHare: getSavedHashes for ${collKey}:`, saved && saved.hashes ? saved.hashes.length + ' hashes' : saved);
                                     } catch (hErr) {
                                         console.warn(`VectHare: getSavedHashes failed for ${collKey}:`, hErr.message);
                                     }
@@ -2236,7 +2249,7 @@ function bindSettingsEvents(settings, callbacks) {
                                 // Run a direct vector query against this collection
                                 try {
                                     const qres = await coreApi.queryCollection(collKey, recentMessages.join('\n'), cfg.world_info_top_k || 3, cfg);
-                                    console.log(`VectHare: queryCollection result for ${collKey}:`, qres);
+                                    logger.debug(`VectHare: queryCollection result for ${collKey}:`, qres);
                                 } catch (qErr) {
                                     console.warn(`VectHare: queryCollection failed for ${collKey}:`, qErr.message);
                                 }
@@ -2263,7 +2276,7 @@ function bindSettingsEvents(settings, callbacks) {
                     throw new Error('WorldInfo module does not export a usable function');
                 }
                 const entries = await fn(recentMessages, activeEntries, cfg);
-                console.log('VectHare: Semantic WI test results (via dynamic import):', entries);
+                logger.debug('VectHare: Semantic WI test results (via dynamic import):', entries);
                 toastr.info(`Semantic WI test completed - ${entries.length} entries (see console)`);
                 return;
             } catch (impErr) {
@@ -2281,7 +2294,7 @@ function bindSettingsEvents(settings, callbacks) {
     $('#vecthare_wi_dump_registry').on('click', function() {
         try {
             const registry = window.extension_settings?.vecthare?.vecthare_collection_registry || settings.vecthare_collection_registry || [];
-            console.log('VectHare: Collection registry dump:', registry);
+            logger.debug('VectHare: Collection registry dump:', registry);
             toastr.info(`Collection registry dumped to console (${registry.length} items)`);
         } catch (e) {
             console.error('VectHare: Failed to dump registry', e);
@@ -2308,7 +2321,7 @@ function bindSettingsEvents(settings, callbacks) {
             }
 
             const first = entries[0];
-            console.log('VectHare: Applying semantic WI entry:', first);
+            logger.debug('VectHare: Applying semantic WI entry:', first);
 
             // Best-effort: try importing ST's world-info module and invoking common APIs
             let applied = false;
@@ -2320,12 +2333,12 @@ function bindSettingsEvents(settings, callbacks) {
                     if (worldInfo[name] && typeof worldInfo[name] === 'function') {
                         await worldInfo[name]([first]);
                         applied = true;
-                        console.log(`VectHare: Applied via world-info.${name}`);
+                        logger.debug(`VectHare: Applied via world-info.${name}`);
                         break;
                     }
                 }
             } catch (e) {
-                console.debug('VectHare: world-info import failed or method not found', e);
+                logger.debug('VectHare: world-info import failed or method not found', e);
             }
 
             // Try global window API fallbacks
@@ -2340,10 +2353,10 @@ function bindSettingsEvents(settings, callbacks) {
                         try {
                             await fn([first]);
                             applied = true;
-                            console.log('VectHare: Applied via global fallback function');
+                            logger.debug('VectHare: Applied via global fallback function');
                             break;
                         } catch (e) {
-                            console.debug('VectHare: fallback apply failed', e);
+                            logger.debug('VectHare: fallback apply failed', e);
                         }
                     }
                 }
@@ -2360,8 +2373,8 @@ function bindSettingsEvents(settings, callbacks) {
                 await navigator.clipboard.writeText(text);
                 toastr.info('Semantic entry copied to clipboard. Paste into World Info editor to activate.');
             } catch (e) {
-                console.log('VectHare: Clipboard write failed, showing content in console');
-                console.log('Semantic entry content:', text);
+                logger.debug('VectHare: Clipboard write failed, showing content in console');
+                logger.debug('Semantic entry content:', text);
                 toastr.info('Semantic entry logged to console. Paste into World Info editor to activate.');
             }
 
@@ -2714,6 +2727,15 @@ function bindSettingsEvents(settings, callbacks) {
             saveSettingsDebounced();
         });
 
+    $('#vecthare_log_level')
+        .val(settings.log_level || 'info')
+        .on('change', function() {
+            settings.log_level = String($(this).val());
+            configureLogger({ level: settings.log_level });
+            applySettingsSnapshot(settings);
+            saveSettingsDebounced();
+        });
+
     $('#vecthare_database_browser').on('click', () => {
         openDatabaseBrowser();
     });
@@ -2743,7 +2765,7 @@ async function initializeCottonTalesIntegration(settings) {
 
     if (cottonTalesInstalled) {
         $('#vecthare_cottontales_section').show();
-        console.log('VectHare: Cotton-Tales detected, showing emotion classification options');
+        logger.debug('VectHare: Cotton-Tales detected, showing emotion classification options');
     } else {
         $('#vecthare_cottontales_section').hide();
         return;
@@ -2931,10 +2953,10 @@ function renderDiagnosticsContent(results, filter = 'all') {
     const output = $('#vecthare_diagnostics_content');
     output.empty();
 
-    console.log('VectHare UI: Rendering diagnostics with results:', results);
-    console.log('VectHare UI: Version data received:', results.version);
-    console.log('VectHare UI: Extension version:', results.version?.extension);
-    console.log('VectHare UI: Plugin version:', results.version?.plugin);
+    logger.debug('VectHare UI: Rendering diagnostics with results:', results);
+    logger.debug('VectHare UI: Version data received:', results.version);
+    logger.debug('VectHare UI: Extension version:', results.version?.extension);
+    logger.debug('VectHare UI: Plugin version:', results.version?.plugin);
 
     const statusIcons = {
         'pass': '<i class="fa-solid fa-circle-check" style="color: var(--vecthare-success);"></i>',

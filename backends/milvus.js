@@ -10,6 +10,7 @@
 
 import { SimilharityBackend, pluginRequest, modelFromSettings } from './similharity-backend.js';
 import { stripRegistryPrefix } from '../core/collection-ids.js';
+import { logger } from '../utils/logger.js';
 
 const MAIN_COLLECTION = 'vecthare_main';
 /** Operations whose plugin endpoint does not take tenant filters. */
@@ -62,7 +63,7 @@ export class MilvusBackend extends SimilharityBackend {
             const errorBody = await response.text().catch(() => 'No response body');
             throw new Error(`[Milvus] Failed to initialize Milvus: ${response.status} ${response.statusText} - ${errorBody}`);
         }
-        console.log('VectHare: Using Milvus backend (production-grade vector search)');
+        logger.debug('VectHare: Using Milvus backend (production-grade vector search)');
     }
 
     /**

@@ -24,6 +24,7 @@ import { setExtensionPrompt, getCurrentChatId } from '../../../../../script.js';
 import { EXTENSION_PROMPT_TAG } from './constants.js';
 import { buildSearchContext } from './conditional-activation.js';
 import { loadWorldInfo } from '../../../../world-info.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * The runtime settings object holds a snapshot of the registry array taken at
@@ -94,7 +95,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
         return [];
     }
 
-    console.log(`VectHare: Querying vectorized lorebooks for semantic WI activation...`);
+    logger.debug(`VectHare: Querying vectorized lorebooks for semantic WI activation...`);
 
     const semanticEntries = [];
     // Lower threshold for hybrid search since RRF fusion produces lower absolute scores
@@ -188,7 +189,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
                     const keyDisplay = Array.isArray(entry.key)
                         ? entry.key.map(k => typeof k === 'object' ? (k.text || k.keyword || JSON.stringify(k)) : k).join(', ')
                         : (entry.key || 'unknown');
-                    console.log(`VectHare: Semantic WI activation: "${keyDisplay}" (score: ${score.toFixed(3)})`);
+                    logger.debug(`VectHare: Semantic WI activation: "${keyDisplay}" (score: ${score.toFixed(3)})`);
                 }
             }
         }
@@ -206,7 +207,7 @@ export async function getSemanticWorldInfoEntries(recentMessages, activeEntries,
     const maxEntries = settings.world_info_max_entries ?? 10;
     const limitedEntries = deduplicatedEntries.slice(0, maxEntries);
 
-    console.log(`VectHare: Found ${limitedEntries.length} semantic WI entries to activate` +
+    logger.debug(`VectHare: Found ${limitedEntries.length} semantic WI entries to activate` +
         (deduplicatedEntries.length > limitedEntries.length ? ` (capped from ${deduplicatedEntries.length} by Max Entries)` : ''));
     return limitedEntries;
 }
@@ -270,7 +271,7 @@ async function getEnabledLorebookCollections(settings, searchContext) {
         // Check if collection passes activation filters
         const passesActivation = await shouldCollectionActivate(collectionId, searchContext);
         if (!passesActivation) {
-            console.log(`VectHare WI: Lorebook collection ${collectionId} did not pass activation filters, skipping`);
+            logger.debug(`VectHare WI: Lorebook collection ${collectionId} did not pass activation filters, skipping`);
             continue;
         }
 
@@ -289,11 +290,11 @@ async function getEnabledLorebookCollections(settings, searchContext) {
     if (exclusiveCollections.length > 0) {
         const exclusiveIds = new Set(exclusiveCollections.map(collection => collection.id));
         const filteredCollections = collections.filter(collection => exclusiveIds.has(collection.id));
-        console.log(`VectHare WI: Exclusive lorebook collection active, suppressing ${collections.length - filteredCollections.length} other lorebook collection(s)`);
+        logger.debug(`VectHare WI: Exclusive lorebook collection active, suppressing ${collections.length - filteredCollections.length} other lorebook collection(s)`);
         return filteredCollections;
     }
 
-    console.log(`VectHare WI: ${collections.length} lorebook collection(s) passed activation filters`);
+    logger.debug(`VectHare WI: ${collections.length} lorebook collection(s) passed activation filters`);
     return collections;
 }
 
@@ -434,7 +435,7 @@ export function initializeWorldInfoIntegration() {
         enhanceEntriesUI: enhanceWorldInfoEntriesUI
     };
 
-    console.log('VectHare: World Info integration hooks initialized');
+    logger.debug('VectHare: World Info integration hooks initialized');
 }
 
 /**
@@ -475,7 +476,7 @@ export async function applySemanticEntriesToPrompt(chat, settings, activeEntries
 
         // Inject into ST extension prompt tag so generation will include it
         setExtensionPrompt(EXTENSION_PROMPT_TAG, fullText, settings.position || 0, settings.depth || 2, false);
-        console.log(`VectHare: Injected ${entries.length} semantic WI entries into prompt`);
+        logger.debug(`VectHare: Injected ${entries.length} semantic WI entries into prompt`);
         return entries;
     } catch (err) {
         console.warn('VectHare: Failed to apply semantic WI to prompt', err.message || err);

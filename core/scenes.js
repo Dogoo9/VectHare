@@ -34,6 +34,7 @@ import {
     saveChunkMetadata,
     deleteChunkMetadata,
 } from './collection-metadata.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -160,7 +161,7 @@ export async function createSceneChunk(start, end, sceneData, settings) {
             }, collectionId);
         }
 
-        console.log(`VectHare Scenes: Created scene chunk ${sceneHash} (${start}-${end}), disabled ${containedHashes.length} chunks`);
+        logger.debug(`VectHare Scenes: Created scene chunk ${sceneHash} (${start}-${end}), disabled ${containedHashes.length} chunks`);
         return { success: true, hash: sceneHash };
 
     } catch (error) {
@@ -199,7 +200,7 @@ export async function deleteSceneChunk(sceneHash, containedHashes, settings, sel
             }
         }
 
-        console.log(`VectHare Scenes: Deleted scene chunk ${sceneHash}, re-enabled ${containedHashes.length} chunks`);
+        logger.debug(`VectHare Scenes: Deleted scene chunk ${sceneHash}, re-enabled ${containedHashes.length} chunks`);
         return { success: true };
 
     } catch (error) {
@@ -230,7 +231,7 @@ export async function updateSceneChunkMetadata(sceneHash, updates, settings, sel
     };
 
     saveChunkMetadata(sceneHash, updatedMeta, collectionId);
-    console.log(`VectHare Scenes: Updated metadata for scene ${sceneHash}`);
+    logger.debug(`VectHare Scenes: Updated metadata for scene ${sceneHash}`);
     return { success: true };
 }
 

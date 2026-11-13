@@ -37,6 +37,7 @@ import { parseRegistryKey } from './collection-ids.js';
 import { getModelField } from './providers.js';
 import { compareEmbeddingFingerprints, compareEmbeddingProbes, storageSettings } from './collection-portability.js';
 import { pluginRequest } from '../backends/similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // CONSTANTS
@@ -261,7 +262,7 @@ export function downloadExport(exportData, filename = null) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    console.log(`VectHare Export: Downloaded ${finalFilename}`);
+    logger.debug(`VectHare Export: Downloaded ${finalFilename}`);
 }
 
 // ============================================================================
@@ -484,7 +485,7 @@ export async function importCollection(exportData, settings, options = {}) {
             progress.updateProgress(3, `Inserting ${preparedChunks.length} chunks (using existing vectors)...`);
             try {
                 await insertChunksWithVectors(collectionId, preparedChunks, settings);
-                console.log(`VectHare Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
+                logger.debug(`VectHare Import: Inserted ${preparedChunks.length} chunks with pre-computed vectors`);
             } catch (error) {
                 throw new Error(`Failed to insert chunks: ${error.message}`);
             }
@@ -493,7 +494,7 @@ export async function importCollection(exportData, settings, options = {}) {
             progress.updateProgress(3, `Embedding ${preparedChunks.length} chunks...`);
             try {
                 await insertVectorItems(collectionId, preparedChunks, settings);
-                console.log(`VectHare Import: Embedded and inserted ${preparedChunks.length} chunks`);
+                logger.debug(`VectHare Import: Embedded and inserted ${preparedChunks.length} chunks`);
             } catch (error) {
                 throw new Error(`Failed to embed chunks: ${error.message}`);
             }

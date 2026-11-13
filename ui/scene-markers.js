@@ -21,6 +21,7 @@ import {
 } from '../core/scenes.js';
 import { getSavedHashes } from '../core/core-vector-api.js';
 import { eventSource, event_types } from '../../../../../script.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // CONSTANTS
@@ -70,7 +71,7 @@ export async function refreshSceneCache(settings) {
         } else {
             cachedSceneChunks = [];
         }
-        console.log(`VectHare Scenes: Cached ${cachedSceneChunks.length} scenes`);
+        logger.debug(`VectHare Scenes: Cached ${cachedSceneChunks.length} scenes`);
     } catch (error) {
         console.error('VectHare Scenes: Failed to refresh cache', error);
         cachedSceneChunks = [];
@@ -445,7 +446,7 @@ export function initializeSceneMarkers() {
             chatObserver.observe(chat, { childList: true, subtree: true });
             // Attach to any existing messages
             attachAllMarkers();
-            console.log('VectHare Scenes: Chat observer started');
+            logger.debug('VectHare Scenes: Chat observer started');
         }
     };
 
@@ -473,5 +474,5 @@ export function initializeSceneMarkers() {
         }, 200);
     });
 
-    console.log('VectHare Scenes: Markers initialized');
+    logger.debug('VectHare Scenes: Markers initialized');
 }

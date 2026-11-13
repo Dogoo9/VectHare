@@ -39,6 +39,7 @@ import {
 } from '../core/chunk-groups.js';
 import { eventSource } from '../../../../../script.js';
 import { escapeHtml } from '../utils/html.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================================
 // STATE
@@ -710,7 +711,7 @@ function bindScenesTabEvents() {
         e.preventDefault();
         e.stopPropagation();
         const hash = $(this).data('scene-hash');
-        console.log('VectHare: Clicked scene with hash:', hash);
+        logger.debug('VectHare: Clicked scene with hash:', hash);
         if (!hash) {
             console.error('VectHare: No scene-hash found on clicked element');
             return;
@@ -1698,7 +1699,7 @@ function bindEvents() {
         e.preventDefault();
         e.stopPropagation();
         const uid = $(this).attr('data-uid');
-        console.log('VectHare: Clicked chunk with uniqueId:', uid);
+        logger.debug('VectHare: Clicked chunk with uniqueId:', uid);
         if (!uid) {
             console.error('VectHare: No uniqueId found on clicked element');
             return;
@@ -2255,7 +2256,7 @@ function debounce(func, wait) {
  * Called from index.js on extension load
  */
 export function initializeVisualizer() {
-    console.log('VectHare: Chunk visualizer initialized');
+    logger.debug('VectHare: Chunk visualizer initialized');
     // No DOM setup needed - modal is created dynamically when opened
 }
 

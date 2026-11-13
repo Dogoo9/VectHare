@@ -21,6 +21,7 @@ import { oai_settings } from '../../../../openai.js';
 import { secret_state } from '../../../../secrets.js';
 import AsyncUtils from '../utils/async-utils.js';
 import { pluginRequest, modelFromSettings } from './similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Build provider-specific parameters for API requests.
@@ -100,20 +101,20 @@ export class StandardBackend extends VectorBackend {
 
     async initialize(settings) {
         // Check if plugin is available
-        console.debug('VectHare: Checking plugin availability...');
+        logger.debug('VectHare: Checking plugin availability...');
         try {
             const response = await pluginRequest('/health');
-            console.debug('VectHare: Plugin health check response:', response.status, response.ok);
+            logger.debug('VectHare: Plugin health check response:', response.status, response.ok);
             this.pluginAvailable = response.ok;
 
             if (this.pluginAvailable) {
                 await pluginRequest('/backend/init/vectra', { method: 'POST' });
-                console.log('VectHare: Standard backend initialized (plugin available)');
+                logger.debug('VectHare: Standard backend initialized (plugin available)');
             } else {
-                console.log('VectHare: Standard backend initialized (native ST API only - health check failed)');
+                logger.debug('VectHare: Standard backend initialized (native ST API only - health check failed)');
             }
         } catch (e) {
-            console.log('VectHare: Standard backend initialized (native ST API only - error:', e.message, ')');
+            logger.debug('VectHare: Standard backend initialized (native ST API only - error:', e.message, ')');
             this.pluginAvailable = false;
         }
         
@@ -190,12 +191,12 @@ export class StandardBackend extends VectorBackend {
         // Count how many chunks have keywords
         const chunksWithKeywords = items.filter(item => item.keywords && item.keywords.length > 0).length;
 
-        console.log(`VectHare: Embedding ${items.length} chunks (avg: ${avgLen} chars, max: ${maxLen} chars at index ${longestChunkIndex}) - ${chunksWithKeywords} chunks have keywords`);
+        logger.debug(`VectHare: Embedding ${items.length} chunks (avg: ${avgLen} chars, max: ${maxLen} chars at index ${longestChunkIndex}) - ${chunksWithKeywords} chunks have keywords`);
 
         // Debug: Log first chunk's keywords if any
         if (chunksWithKeywords > 0) {
             const firstChunkWithKeywords = items.find(item => item.keywords && item.keywords.length > 0);
-            console.debug(`VectHare: First chunk keywords:`, firstChunkWithKeywords.keywords);
+            logger.debug(`VectHare: First chunk keywords:`, firstChunkWithKeywords.keywords);
         }
 
         // Warn if chunks are unusually large (potential OOM risk)
@@ -206,11 +207,11 @@ export class StandardBackend extends VectorBackend {
 
         try {
             // Try plugin API first (supports metadata) - fallback to native API if unavailable
-            console.debug('VectHare: this.pluginAvailable =', this.pluginAvailable);
+            logger.debug('VectHare: this.pluginAvailable =', this.pluginAvailable);
             let usePluginApi = this.pluginAvailable;
             let endpoint = usePluginApi ? '/api/plugins/similharity/chunks/insert' : '/api/vector/insert';
 
-            console.debug(`VectHare: Using ${usePluginApi ? 'PLUGIN' : 'NATIVE'} API for insertion (${endpoint})`);
+            logger.debug(`VectHare: Using ${usePluginApi ? 'PLUGIN' : 'NATIVE'} API for insertion (${endpoint})`);
             
             // Warn if keywords will be lost
             if (!usePluginApi && chunksWithKeywords > 0) {
@@ -242,7 +243,7 @@ export class StandardBackend extends VectorBackend {
                     };
                     // Debug: Log first item's metadata
                     if (item === items[0] && item.keywords?.length > 0) {
-                        console.debug(`VectHare: First item metadata being sent:`, mappedItem.metadata);
+                        logger.debug(`VectHare: First item metadata being sent:`, mappedItem.metadata);
                     }
                     return mappedItem;
                 }),
@@ -276,7 +277,7 @@ export class StandardBackend extends VectorBackend {
                 throw new Error(`Failed to insert vectors: ${response.status} - ${errorBody}`);
             }
 
-            console.log(`VectHare Standard: Inserted ${items.length} vectors into ${collectionId}`);
+            logger.debug(`VectHare Standard: Inserted ${items.length} vectors into ${collectionId}`);
         } catch (error) {
             // Enhanced error logging for OOM debugging
             const isOOM = error.message?.includes('OrtRun') || error.message?.includes('error code = 6');

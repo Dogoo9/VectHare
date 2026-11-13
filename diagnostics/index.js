@@ -69,6 +69,7 @@ import { testConditionalActivation } from './activation-tests.js';
 
 import { runVisualizerTests } from './visualizer-tests.js';
 import { cleanupTestCollections } from '../core/collection-loader.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Runs all diagnostic checks
@@ -77,7 +78,7 @@ import { cleanupTestCollections } from '../core/collection-loader.js';
  * @returns {Promise<object>} Diagnostics results
  */
 export async function runDiagnostics(settings, includeProductionTests = false) {
-    console.log('VectHare Diagnostics: Running health checks...');
+    logger.debug('VectHare Diagnostics: Running health checks...');
 
     // Get version information
     let extensionVersion = 'Unknown';
@@ -87,14 +88,14 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
     try {
         // Add cache-busting parameter to ensure fresh fetch
         const manifestUrl = `/scripts/extensions/third-party/VectHare/manifest.json?_=${Date.now()}`;
-        console.log('VectHare Diagnostics: Fetching manifest from:', manifestUrl);
+        logger.debug('VectHare Diagnostics: Fetching manifest from:', manifestUrl);
         const manifestResponse = await fetch(manifestUrl);
-        console.log('VectHare Diagnostics: Manifest response status:', manifestResponse.status);
+        logger.debug('VectHare Diagnostics: Manifest response status:', manifestResponse.status);
         if (manifestResponse.ok) {
             const manifest = await manifestResponse.json();
-            console.log('VectHare Diagnostics: Manifest data:', manifest);
+            logger.debug('VectHare Diagnostics: Manifest data:', manifest);
             extensionVersion = manifest.version || 'Unknown';
-            console.log('VectHare Diagnostics: Extension version:', extensionVersion);
+            logger.debug('VectHare Diagnostics: Extension version:', extensionVersion);
         } else {
             console.warn('VectHare Diagnostics: Manifest fetch failed with status:', manifestResponse.status);
         }
@@ -119,7 +120,7 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
     // Auto-clean any ghost test collections from the registry
     const testCollectionsCleaned = cleanupTestCollections();
     if (testCollectionsCleaned > 0) {
-        console.log(`VectHare Diagnostics: Cleaned ${testCollectionsCleaned} ghost test collections from registry`);
+        logger.debug(`VectHare Diagnostics: Cleaned ${testCollectionsCleaned} ghost test collections from registry`);
     }
 
     const categories = {
@@ -266,10 +267,10 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
         timestamp: new Date().toISOString()
     };
 
-    console.log('VectHare Diagnostics: Complete', results);
-    console.log('VectHare Diagnostics: Version object:', results.version);
-    console.log('VectHare Diagnostics: Extension version in results:', results.version.extension);
-    console.log('VectHare Diagnostics: Plugin version in results:', results.version.plugin);
+    logger.debug('VectHare Diagnostics: Complete', results);
+    logger.debug('VectHare Diagnostics: Version object:', results.version);
+    logger.debug('VectHare Diagnostics: Extension version in results:', results.version.extension);
+    logger.debug('VectHare Diagnostics: Plugin version in results:', results.version.plugin);
 
     return results;
 }

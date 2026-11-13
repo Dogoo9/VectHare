@@ -242,13 +242,13 @@ function filterSceneDisabledChunks(chunks) {
     const filtered = chunks.filter(chunk => {
         const isDisabled = isChunkDisabledByScene(chunk.hash, chunk.collectionId);
         if (isDisabled) {
-            console.debug(`VectHare: Chunk ${chunk.hash} is disabled by scene`);
+            logger.debug(`VectHare: Chunk ${chunk.hash} is disabled by scene`);
         }
         return !isDisabled;
     });
 
     if (filtered.length !== chunks.length) {
-        console.log(`VectHare: Scene filtering: ${chunks.length} → ${filtered.length} chunks (${chunks.length - filtered.length} disabled by scenes)`);
+        logger.debug(`VectHare: Scene filtering: ${chunks.length} → ${filtered.length} chunks (${chunks.length - filtered.length} disabled by scenes)`);
     }
 
     return filtered;
@@ -360,7 +360,7 @@ async function applyChunkConditions(chunks, chat, settings, trackActivations = t
         });
     }
 
-    console.log(`VectHare: Chunk conditions filtered ${filtered.length} → ${conditionFilteredChunks.length}`);
+    logger.debug(`VectHare: Chunk conditions filtered ${filtered.length} → ${conditionFilteredChunks.length}`);
     return conditionFilteredChunks;
 }
 
@@ -423,7 +423,7 @@ async function rerankWithBananaBread(query, chunks, settings) {
             return chunk;
         });
 
-        console.log(`VectHare: Reranked ${rerankedChunks.length} chunks with BananaBread`);
+        logger.debug(`VectHare: Reranked ${rerankedChunks.length} chunks with BananaBread`);
         return rerankedChunks;
     } catch (error) {
         console.warn('VectHare: Reranking error:', error.message);
@@ -850,7 +850,7 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
         resultNormalizationMs: normalizationMs,
         totalRetrievalMs: performance.now() - totalStart,
     };
-    console.debug('[VectHare] Retrieval timings', timings);
+    logger.debug('[VectHare] Retrieval timings', timings);
     addTrace(debugData, 'performance', 'Retrieval timings', timings);
 
     return chunksForVisualizer;
@@ -2064,7 +2064,7 @@ export async function vectorizeAll(settings, batchSize) {
 
             // Handle disabled/blocked state
             if (result.remaining === -1) {
-                console.log('VectHare: Vectorization blocked or disabled');
+                logger.debug('VectHare: Vectorization blocked or disabled');
                 progressTracker.complete(false, 'Blocked or disabled');
                 return;
             }
@@ -2082,7 +2082,7 @@ export async function vectorizeAll(settings, batchSize) {
             );
             progressTracker.updateChunks(totalChunks);
 
-            console.log(`VectHare: Vectorization iteration ${iteration}, ${result.remaining > 0 ? result.remaining + ' remaining' : 'complete'} (${result.chunksCreated} chunks this batch)`);
+            logger.debug(`VectHare: Vectorization iteration ${iteration}, ${result.remaining > 0 ? result.remaining + ' remaining' : 'complete'} (${result.chunksCreated} chunks this batch)`);
 
             if (chatId !== getCurrentChatId()) {
                 progressTracker.complete(false, 'Chat changed during vectorization');
@@ -2092,7 +2092,7 @@ export async function vectorizeAll(settings, batchSize) {
 
         progressTracker.complete(true, `Vectorized ${processedCount} messages (${totalChunks} chunks)`);
         toastr.success('Chat vectorized successfully', 'VectHare');
-        console.log(`VectHare: ✅ Vectorization complete after ${iteration} iterations`);
+        logger.debug(`VectHare: ✅ Vectorization complete after ${iteration} iterations`);
     } catch (error) {
         console.error('VectHare: Failed to vectorize all', error);
         progressTracker.addError(error.message);

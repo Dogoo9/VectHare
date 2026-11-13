@@ -56,6 +56,7 @@ import {
     RETRY_BACKOFF_MULTIPLIER,
 } from './constants.js';
 import { pluginRequest } from '../backends/similharity-backend.js';
+import { logger } from '../utils/logger.js';
 
 // Get shared WebLLM provider singleton (lazy-initialized)
 const webllmProvider = getWebLlmProvider();
@@ -187,7 +188,7 @@ class DynamicRateLimiter {
             const waitTime = (oldest + intervalMs) - now;
 
             if (waitTime > 0) {
-                console.log(`VectHare: Rate limit reached. Waiting ${Math.round(waitTime / 1000)}s...`);
+                logger.debug(`VectHare: Rate limit reached. Waiting ${Math.round(waitTime / 1000)}s...`);
                 await AsyncUtils.sleep(waitTime + 100); // Add small buffer
             }
 
@@ -650,7 +651,7 @@ async function insertVectorItemsResolved(collectionId, items, settings, onProgre
     try {
         // If source requires client-side embeddings, use streaming approach
         if (usesClientEmbeddings(settings)) {
-            console.log(`VectHare: Streaming embeddings and writing for ${settings.source}...`);
+            logger.debug(`VectHare: Streaming embeddings and writing for ${settings.source}...`);
 
             // Extract text strings - getAdditionalArgs expects string[], not objects
             const textStrings = items.map(item => {
@@ -672,7 +673,7 @@ async function insertVectorItemsResolved(collectionId, items, settings, onProgre
             const batches = chunkArray(items, BATCH_SIZE);
 
             const hasRateLimit = settings.rate_limit_calls > 0;
-            console.log(`VectHare: Processing ${items.length} items in ${batches.length} batch(es) of up to ${BATCH_SIZE}${hasRateLimit ? ` with rate limit (Max ${settings.rate_limit_calls} calls / ${settings.rate_limit_interval}s)` : ''}`);
+            logger.debug(`VectHare: Processing ${items.length} items in ${batches.length} batch(es) of up to ${BATCH_SIZE}${hasRateLimit ? ` with rate limit (Max ${settings.rate_limit_calls} calls / ${settings.rate_limit_interval}s)` : ''}`);
 
             for (let i = 0; i < batches.length; i++) {
                 const processBatch = async () => {
@@ -721,7 +722,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
     let totalProcessed = 0;
     const totalBatches = Math.ceil(textStrings.length / EMBEDDING_BATCH_SIZE);
 
-    console.log(`VectHare: Streaming ${items.length} items in ${totalBatches} batch(es) of up to ${EMBEDDING_BATCH_SIZE}`);
+    logger.debug(`VectHare: Streaming ${items.length} items in ${totalBatches} batch(es) of up to ${EMBEDDING_BATCH_SIZE}`);
 
     // Process embeddings in batches
     for (let i = 0; i < textStrings.length; i += EMBEDDING_BATCH_SIZE) {
@@ -730,7 +731,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
         const batchItems = items.slice(i, batchEnd);
         const batchNum = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1;
 
-        console.log(`VectHare: Embedding batch ${batchNum}/${totalBatches} (items ${i + 1}-${batchEnd})`);
+        logger.debug(`VectHare: Embedding batch ${batchNum}/${totalBatches} (items ${i + 1}-${batchEnd})`);
 
         // VEC-6: Retry logic per batch instead of per chunk
         let additionalArgs;
@@ -775,7 +776,7 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
         }
 
         // VEC-6: Write batch to database with retry logic
-        console.log(`VectHare: Writing batch ${batchNum} to database (${itemsToWrite.length} items)`);
+        logger.debug(`VectHare: Writing batch ${batchNum} to database (${itemsToWrite.length} items)`);
         try {
             await AsyncUtils.retry(async () => {
                 requirePrecomputedForReassignment(settings, routed, itemsToWrite[0]?.vector, backend);
@@ -789,12 +790,12 @@ async function streamEmbeddingsAndWrite(backend, collectionId, items, textString
 
         // Update progress
         if (onProgress) {
-            console.log(`[Core Vector API] Streamed ${totalProcessed}/${items.length} (${Math.round((totalProcessed / items.length) * 100)}%)`);
+            logger.debug(`[Core Vector API] Streamed ${totalProcessed}/${items.length} (${Math.round((totalProcessed / items.length) * 100)}%)`);
             onProgress(totalProcessed, items.length);
         }
     }
 
-    console.log(`VectHare: Completed streaming ${totalProcessed} items to database`);
+    logger.debug(`VectHare: Completed streaming ${totalProcessed} items to database`);
 }
 
 /**
@@ -983,7 +984,7 @@ async function purgeVectorIndexResolved(collectionId, settings) {
         const backend = await getBackend(routed);
         await backend.purgeVectorIndex(collectionId, routed);
         purgeLexicalIndex(collectionStorageKey(collectionId, settings));
-        console.log(`VectHare: Purged vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purged vector index for collection ${collectionId}`);
         return true;
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
@@ -1001,12 +1002,12 @@ async function purgeVectorIndexResolved(collectionId, settings) {
  */
 async function purgeFileVectorIndexResolved(collectionId, settings) {
     try {
-        console.log(`VectHare: Purging file vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purging file vector index for collection ${collectionId}`);
         const routed = storageSettings(settings);
         const backend = await getBackend(routed);
         await backend.purgeFileVectorIndex(collectionId, routed);
         purgeLexicalIndex(collectionStorageKey(collectionId, settings));
-        console.log(`VectHare: Purged vector index for collection ${collectionId}`);
+        logger.debug(`VectHare: Purged vector index for collection ${collectionId}`);
     } catch (error) {
         // VEC-33: Invalidate health cache on operation error
         invalidateBackendHealth(settings?.vector_backend || 'standard', error);
