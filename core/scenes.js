@@ -36,21 +36,6 @@ import {
 } from './collection-metadata.js';
 
 // ============================================================================
-// CONSTANTS
-// ============================================================================
-
-/**
- * Scene mode determines how scenes interact with retrieval
- * @type {Object.<string, string>}
- */
-export const SCENE_MODES = {
-    NONE: 'none',                   // Scenes are visual only, no special treatment
-    SCENES_ONLY: 'scenes_only',     // Only scene chunks, individual chunks disabled
-    SCENES_REPLACE: 'scenes_replace', // Same as above, clearer intent
-    SCENES_BOOST: 'scenes_boost',   // Both exist, scenes get relevance boost
-};
-
-// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -84,18 +69,6 @@ function buildSceneText(messages, start, end) {
         .filter(msg => msg.mes && !msg.is_system)
         .map(msg => `${msg.name || 'Unknown'}: ${substituteParams(msg.mes)}`)
         .join('\n\n');
-}
-
-/**
- * Computes hash for scene from combined text
- * @param {object[]} messages - Chat messages array
- * @param {number} start - Start index
- * @param {number} end - End index
- * @returns {number}
- */
-export function computeSceneHash(messages, start, end) {
-    const text = buildSceneText(messages, start, end);
-    return getStringHash(text);
 }
 
 /**
@@ -276,84 +249,12 @@ export function isChunkDisabledByScene(hash, collectionId) {
 }
 
 /**
- * Gets the scene hash that disabled a chunk
- * @param {number} hash - Chunk hash
- * @returns {number|null}
- */
-export function getDisablingSceneHash(hash, collectionId) {
-    const meta = getChunkMetadata(hash, collectionId);
-    return meta?.disabledByScene ?? null;
-}
-
-/**
  * Filters scene chunks from a list of chunks
  * @param {object[]} chunks - Array of chunks with metadata
  * @returns {object[]} Only chunks where metadata.isScene === true
  */
 export function filterSceneChunks(chunks) {
     return chunks.filter(chunk => chunk.metadata?.isScene === true);
-}
-
-/**
- * Filters out scene chunks (returns only regular chunks)
- * @param {object[]} chunks - Array of chunks with metadata
- * @returns {object[]} Only chunks where metadata.isScene !== true
- */
-export function filterNonSceneChunks(chunks) {
-    return chunks.filter(chunk => chunk.metadata?.isScene !== true);
-}
-
-/**
- * Filters out chunks disabled by scenes
- * @param {object[]} chunks - Array of chunks
- * @returns {object[]} Chunks not disabled by scenes
- */
-export function filterDisabledChunks(chunks) {
-    return chunks.filter(chunk => !isChunkDisabledByScene(chunk.hash, chunk.collectionId));
-}
-
-// ============================================================================
-// SCENE BOUNDARY HELPERS (for UI markers)
-// ============================================================================
-
-/**
- * Finds scene chunk that contains a specific message
- * @param {object[]} sceneChunks - Array of scene chunks
- * @param {number} messageId - Message index
- * @returns {object|null}
- */
-export function findSceneAtMessage(sceneChunks, messageId) {
-    return sceneChunks.find(chunk =>
-        chunk.metadata?.isScene &&
-        messageId >= chunk.metadata.sceneStart &&
-        messageId <= chunk.metadata.sceneEnd
-    ) || null;
-}
-
-/**
- * Checks if a message is a scene boundary
- * @param {object[]} sceneChunks - Array of scene chunks
- * @param {number} messageId - Message index
- * @returns {{isStart: boolean, isEnd: boolean, scene: object|null}}
- */
-export function getMessageSceneStatus(sceneChunks, messageId) {
-    for (const chunk of sceneChunks) {
-        if (!chunk.metadata?.isScene) continue;
-
-        if (chunk.metadata.sceneStart === messageId) {
-            return { isStart: true, isEnd: false, scene: chunk };
-        }
-        if (chunk.metadata.sceneEnd === messageId) {
-            return { isStart: false, isEnd: true, scene: chunk };
-        }
-    }
-
-    const containingScene = findSceneAtMessage(sceneChunks, messageId);
-    return {
-        isStart: false,
-        isEnd: false,
-        scene: containingScene,
-    };
 }
 
 /**
@@ -367,10 +268,3 @@ export function getPendingScene() {
     return pendingSceneStart;
 }
 
-export function setPendingSceneStart(messageId) {
-    pendingSceneStart = messageId !== null ? { start: messageId } : null;
-}
-
-export function clearPendingScene() {
-    pendingSceneStart = null;
-}

@@ -382,19 +382,6 @@ export async function getBackend(settings, preferredBackend = null) {
 }
 
 /**
- * Get a backend for a specific collection (uses collection's stored backend)
- * @param {string} collectionBackend - The backend the collection was created with
- * @param {object} settings - VectHare settings
- * @returns {Promise<VectorBackend>}
- */
-export async function getBackendForCollection(collectionBackend, settings) {
-    if (!collectionBackend) {
-        throw new Error('Collection backend not specified - this is a bug');
-    }
-    return getBackend(settings, collectionBackend);
-}
-
-/**
  * Check if a specific backend is available/healthy
  * @param {string} backendName - Backend to check
  * @param {object} settings - VectHare settings
@@ -458,10 +445,3 @@ export function invalidateBackendHealth(backendName, error = null) {
     }
 }
 
-/**
- * Get available backend names
- * @returns {string[]}
- */
-export function getAvailableBackends() {
-    return Object.keys(BACKENDS);
-}

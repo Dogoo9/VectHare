@@ -12,7 +12,7 @@
 
 import { getContentType, getContentTypeDefaults, hasFeature } from './content-types.js';
 import { chunkText } from './chunking.js';
-import { insertVectorItems, purgeVectorIndex } from './core-vector-api.js';
+import { insertVectorItems } from './core-vector-api.js';
 import { setCollectionMeta, getDefaultDecayForType } from './collection-metadata.js';
 import { registerCollection } from './collection-loader.js';
 import { getBackend } from '../backends/backend-manager.js';
@@ -786,11 +786,3 @@ function enrichChunks(chunks, contentType, source, settings, preparedContent, ve
     });
 }
 
-/**
- * Deletes a content collection
- */
-export async function deleteContentCollection(collectionId) {
-    const vecthareSettings = extension_settings.vecthare;
-    await purgeVectorIndex(collectionId, vecthareSettings);
-    console.log(`VectHare: Deleted collection: ${collectionId}`);
-}

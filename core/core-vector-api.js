@@ -40,7 +40,7 @@ import {
 import { applyKeywordBoosts, getOverfetchAmount } from './keyword-boost.js';
 import { applyBM25Scoring } from './bm25-scorer.js';
 import { hybridSearch } from './hybrid-search.js';
-import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, purgeAllLexicalIndexes, searchLexicalIndex } from './lexical-index.js';
+import { indexLexicalItems, deleteLexicalItems, purgeLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 import { assertWritableEmbedding, collectionStorageKey, storageSettings } from './collection-portability.js';
 import { embedLocal } from '../providers/local-embeddings.js';
 import { resolveCollectionSettings, physicalCollectionId, embeddingProfileKey, collectionMutation } from './collection-runtime.js';
@@ -972,34 +972,6 @@ async function queryMultipleCollectionsResolved(collectionIds, searchText, topK,
 }
 
 /**
- * Queries multiple collections with conditional activation filtering.
- * Collections that don't meet their activation conditions are skipped.
- *
- * @param {string[]} collectionIds - Collection IDs to potentially query
- * @param {string} searchText - Text to query
- * @param {number} topK - Number of results to return
- * @param {number} threshold - Score threshold
- * @param {object} settings - VectHare settings object
- * @param {object} context - Search context (from buildSearchContext)
- * @returns {Promise<Record<string, { hashes: number[], metadata: object[] }>>} - Results mapped to collection IDs
- */
-export async function queryActiveCollections(collectionIds, searchText, topK, threshold, settings, context) {
-    // Lazy import to avoid circular dependency
-    const { filterActiveCollections } = await import('./collection-metadata.js');
-
-    // Filter collections based on their activation conditions
-    const activeCollectionIds = await filterActiveCollections(collectionIds, context);
-
-    if (activeCollectionIds.length === 0) {
-        console.log('VectHare: No collections passed activation conditions');
-        return {};
-    }
-
-    // Query only the active collections
-    return await queryMultipleCollections(activeCollectionIds, searchText, topK, threshold, settings);
-}
-
-/**
  * Purges the vector index for a collection.
  * @param {string} collectionId Collection ID to purge
  * @param {object} settings VectHare settings object
@@ -1039,26 +1011,6 @@ async function purgeFileVectorIndexResolved(collectionId, settings) {
         // VEC-33: Invalidate health cache on operation error
         invalidateBackendHealth(settings?.vector_backend || 'standard', error);
         console.error('VectHare: Failed to purge file', error);
-    }
-}
-
-/**
- * Purges all vector indexes.
- * @param {object} settings VectHare settings object
- * @returns {Promise<void>}
- */
-export async function purgeAllVectorIndexes(settings) {
-    try {
-        const backend = await getBackend(settings);
-        await backend.purgeAllVectorIndexes(settings);
-        purgeAllLexicalIndexes();
-        console.log('VectHare: Purged all vector indexes');
-        toastr.success('All vector indexes purged', 'Purge successful');
-    } catch (error) {
-        // VEC-33: Invalidate health cache on operation error
-        invalidateBackendHealth(settings?.vector_backend || 'standard', error);
-        console.error('VectHare: Failed to purge all', error);
-        toastr.error('Failed to purge all vector indexes', 'Purge failed');
     }
 }
 

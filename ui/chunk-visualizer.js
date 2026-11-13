@@ -151,7 +151,6 @@ function updateChunkData(hash, updates) {
         allChunks.forEach(chunk => {
             if (chunk.hash === hash) {
                 // merge pending changes into the chunk for fresh data if chunks end up with same hash somehow.
-                const stored = getChunkMetadata(hash, currentMetadataKey) || {};
                 const pending = pendingChanges.get(hash) || {};
                 chunk.data = { ...chunk.data, ...pending };
             }
@@ -231,20 +230,6 @@ async function saveAllChanges() {
         console.error('VectHare: Failed to save changes', error);
         toastr.error(`Failed to save changes: ${error.message}`, 'VectHare');
     }
-}
-
-function discardAllChanges() {
-    pendingChanges.clear();
-    hasUnsavedChanges = false;
-    // Reload chunk data from stored metadata
-    allChunks = allChunks.map(chunk => ({
-        ...chunk,
-        data: getChunkData(chunk)
-    }));
-    // PERF: Rebuild lookup map after allChunks modification
-    allChunksMap = new Map(allChunks.map(c => [c.uniqueId, c]));
-    renderChunkList();
-    renderDetailPanel();
 }
 
 // ============================================================================
@@ -1402,9 +1387,6 @@ function renderDetailPanel() {
     const listPosition = filteredChunksMap.get(selectedChunkId);
     const displayNumber = listPosition !== undefined ? listPosition + 1 : '?';
 
-    const hasConditions = data.conditions?.enabled && data.conditions?.rules?.length > 0;
-    const hasSummaries = data.summaries?.length > 0;
-
     panel.html(`
         <!-- Header -->
         <div class="vecthare-detail-header">
@@ -2029,78 +2011,6 @@ function parsePlaintextKeywords(text) {
         // No weight specified, default to 1.5x
         return { text: trimmed, weight: 1.5 };
     }).filter(Boolean);
-}
-
-// ============================================================================
-// TEXT EDITOR
-// ============================================================================
-
-function openTextEditor(chunk) {
-    const overlay = $(`
-        <div class="vecthare-text-editor-overlay" id="vecthare_text_editor_overlay">
-            <div class="vecthare-text-editor-modal">
-                <div class="vecthare-text-editor-header">
-                    <h4>Edit Chunk Text</h4>
-                </div>
-                <div class="vecthare-text-editor-body">
-                    <textarea class="vecthare-text-editor-textarea" id="vecthare_text_editor_textarea">${escapeHtml(chunk.data.text)}</textarea>
-                </div>
-                <div class="vecthare-text-editor-footer">
-                    <button class="vecthare-text-editor-btn vecthare-text-editor-cancel" id="vecthare_text_cancel">Cancel</button>
-                    <button class="vecthare-text-editor-btn vecthare-text-editor-save" id="vecthare_text_save">Save & Re-embed</button>
-                </div>
-            </div>
-        </div>
-    `);
-
-    $('.vecthare-visualizer-container').append(overlay);
-
-    $('#vecthare_text_cancel').on('click', () => overlay.remove());
-    overlay.on('click', function(e) {
-        if (e.target === this) overlay.remove();
-    });
-
-    $('#vecthare_text_save').on('click', async function() {
-        const newText = $('#vecthare_text_editor_textarea').val().trim();
-        if (!newText) return;
-
-        $(this).prop('disabled', true).text('Saving...');
-
-        try {
-            // Delete old
-            await deleteVectorItems(currentCollectionId, [chunk.hash], currentSettings);
-
-            // Insert new with new hash (keep as number for Qdrant compatibility)
-            const newHash = getStringHash(newText);
-            await insertVectorItems(currentCollectionId, [{
-                hash: newHash,
-                text: newText,
-                index: chunk.index
-            }], currentSettings);
-
-            // Update metadata (use string keys for metadata storage)
-            const oldMeta = getChunkMetadata(String(chunk.hash), currentMetadataKey);
-            if (oldMeta) {
-                deleteChunkMetadata(String(chunk.hash), currentMetadataKey);
-                saveChunkMetadata(String(newHash), { ...oldMeta }, currentMetadataKey);
-            }
-
-            // Update local state - update hash but keep same uniqueId for selection
-            chunk.hash = newHash;
-            chunk.text = newText;
-            chunk.data.text = newText;
-            // selectedChunkId stays the same since uniqueId doesn't change
-
-            overlay.remove();
-            renderChunkList();
-            renderDetailPanel();
-            toastr.success('Chunk updated successfully', 'VectHare');
-        } catch (error) {
-            console.error('Failed to update chunk:', error);
-            toastr.error('Failed to update chunk', 'VectHare');
-            $(this).prop('disabled', false).text('Save & Re-embed');
-        }
-    });
 }
 
 // ============================================================================

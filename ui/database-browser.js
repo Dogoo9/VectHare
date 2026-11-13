@@ -787,16 +787,6 @@ function renderCollectionCard(collection) {
 
   // Activation badge (shows triggers or conditions)
   const activationSummary = getCollectionActivationSummary(collection.id);
-  let activationBadge = "";
-  if (activationSummary.alwaysActive) {
-    activationBadge =
-      '<span class="vecthare-badge vecthare-badge-always" title="Always active">∞ Always</span>';
-  } else if (activationSummary.triggerCount > 0) {
-    activationBadge = `<span class="vecthare-badge vecthare-badge-triggers" title="${activationSummary.triggerCount} trigger(s)">🎯 ${activationSummary.triggerCount}</span>`;
-  } else if (activationSummary.conditionsEnabled) {
-    activationBadge = `<span class="vecthare-badge vecthare-badge-conditions" title="${activationSummary.conditionCount} condition(s)">⚡ ${activationSummary.conditionCount}</span>`;
-  }
-
   // Backend badge - shows vector database (Standard, LanceDB, Qdrant)
   const backendDisplayName =
     {

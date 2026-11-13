@@ -3029,7 +3029,6 @@ function renderDiagnosticsContent(results, filter = 'all') {
             const catPass = checks.filter(c => c.status === 'pass').length;
             const catWarn = checks.filter(c => c.status === 'warning').length;
             const catFail = checks.filter(c => c.status === 'fail').length;
-            const catTotal = checks.length;
             const filteredCount = checks.filter(filterCheck).length;
 
             // Don't show category if all items filtered out
@@ -3514,7 +3513,6 @@ async function showQdrantDimensionFixDialog() {
         if (confirmed) {
             toastr.info('Purging Qdrant collection...');
             try {
-                const { getRequestHeaders } = await import('../../../../../script.js');
                 const response = await pluginRequest('/backend/qdrant/purge-collection', { body: { collectionName: 'vecthare_main' } });
 
                 if (response.ok) {
@@ -3543,9 +3541,3 @@ async function showQdrantDimensionFixDialog() {
     });
 }
 
-/**
- * Hides diagnostics output
- */
-export function hideDiagnosticsResults() {
-    $('#vecthare_diagnostics_output').hide();
-}

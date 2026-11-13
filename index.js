@@ -40,12 +40,7 @@ import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './
 import { pluginRequest } from './backends/similharity-backend.js';
 
 // VectHare modules - Cotton-Tales Integration
-import './core/emotion-classifier.js'; // Exposes window.VectHareEmotionClassifier
-
-// Constants
-const MODULE_NAME = 'VectHare';
-
-// Default settings
+import './core/emotion-classifier.js';// Default settings
 const defaultSettings = {
     // Core vector settings
     source: 'transformers',

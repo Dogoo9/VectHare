@@ -111,7 +111,3 @@ export async function duplicateCollection(key, name, settings, { targetBackend, 
     }
 }
 
-/** Compatibility entry point for callers of the original Qdrant-only action. */
-export function duplicateCollectionToQdrant(key, name, settings, options = {}) {
-    return duplicateCollection(key, name, settings, { ...options, targetBackend: 'qdrant' });
-}

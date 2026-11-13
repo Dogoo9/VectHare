@@ -31,9 +31,6 @@ const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 
 /** Keyword for VectHare data in PNG tEXt/zTXt chunks */
 const VECTHARE_KEYWORD = 'vecthare';
 
-/** Maximum keyword length in PNG text chunks */
-const MAX_KEYWORD_LENGTH = 79;
-
 // ============================================================================
 // CRC32 CALCULATION (Required for PNG chunks)
 // ============================================================================
@@ -603,21 +600,3 @@ export async function readPNGFile(file) {
     return new Uint8Array(buffer);
 }
 
-/**
- * Checks if a file is a PNG with VectHare data
- * @param {File} file - File to check
- * @returns {Promise<boolean>}
- */
-export async function isVectHarePNG(file) {
-    if (!file.type.includes('png') && !file.name.toLowerCase().endsWith('.png')) {
-        return false;
-    }
-
-    try {
-        const data = await readPNGFile(file);
-        const exportData = await extractDataFromPNG(data);
-        return exportData !== null && (exportData.generator === 'VectHare' || exportData.version);
-    } catch {
-        return false;
-    }
-}

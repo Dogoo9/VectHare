@@ -78,20 +78,6 @@ export async function refreshSceneCache(settings) {
 }
 
 /**
- * Gets cached scenes (for external use)
- */
-export function getCachedScenes() {
-    return cachedSceneChunks;
-}
-
-/**
- * Gets pending scene start (for external use)
- */
-export function getPendingSceneStart() {
-    return pendingSceneStart;
-}
-
-/**
  * Sets the VectHare settings for scene operations
  */
 export function setSceneSettings(settings) {
@@ -120,15 +106,6 @@ function getSceneAtMessage(msgId) {
  */
 function getSceneStartingAt(msgId) {
     return cachedSceneChunks.find(s => s.sceneStart === msgId) || null;
-}
-
-/**
- * Checks if a message is a scene end
- * @param {number} msgId - Message index
- * @returns {object|null} The scene chunk or null
- */
-function getSceneEndingAt(msgId) {
-    return cachedSceneChunks.find(s => s.sceneEnd === msgId) || null;
 }
 
 // ============================================================================
@@ -205,11 +182,6 @@ export function attachAllMarkers() {
     messages.forEach(msg => attachMarkersToMessage(msg));
 }
 
-export function removeAllMarkers() {
-    document.querySelectorAll(`.${START_MARKER_CLASS}`).forEach(m => m.remove());
-    document.querySelectorAll(`.${END_MARKER_CLASS}`).forEach(m => m.remove());
-}
-
 // ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
@@ -223,8 +195,6 @@ function updateMessageMarkerState(messageElement, messageId) {
 
     const existingScene = getSceneAtMessage(messageId);
     const isExistingStart = getSceneStartingAt(messageId) !== null;
-    const isExistingEnd = getSceneEndingAt(messageId) !== null;
-    const isInPendingRange = pendingSceneStart !== null && messageId > pendingSceneStart;
 
     // START button visibility
     if (startButton) {

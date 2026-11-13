@@ -76,20 +76,6 @@ export function isCottonTalesInstalled() {
     }
 }
 
-/**
- * Check if Cotton-Tales is using VectHare for classification
- * @returns {boolean}
- */
-export function isCottonTalesUsingVectHare() {
-    try {
-        const ctSettings = extension_settings?.cotton_tales;
-        // EXPRESSION_API.vecthare = 4
-        return ctSettings?.expressionApi === 4;
-    } catch {
-        return false;
-    }
-}
-
 // =============================================================================
 // CLASSIFIER API
 // =============================================================================

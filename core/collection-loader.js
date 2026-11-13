@@ -16,10 +16,6 @@ import { getSavedHashes } from './core-vector-api.js';
 import { getStringHash } from '../../../../utils.js';
 import {
     isCollectionEnabled,
-    setCollectionEnabled,
-    getChunkMetadata,
-    saveChunkMetadata,
-    deleteChunkMetadata,
     deleteCollectionMeta,
     ensureCollectionMeta,
     getCollectionMeta,
@@ -595,16 +591,6 @@ async function discoverViaFallback(settings) {
             }
         }
     }
-
-    // 4. Probe for common content type patterns that might exist
-    const contentPatterns = [
-        // Lorebook patterns
-        `${COLLECTION_PREFIXES.VECTHARE_LOREBOOK}`,
-        // Document patterns
-        `${COLLECTION_PREFIXES.VECTHARE_DOCUMENT}`,
-        // File patterns (legacy)
-        `${COLLECTION_PREFIXES.FILE}`,
-    ];
 
     // Note: Without filesystem access, we can't discover collections with unknown IDs
     // The registry is our primary source of truth for non-current-chat collections

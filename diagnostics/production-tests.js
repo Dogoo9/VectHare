@@ -411,7 +411,7 @@ export async function testVectorDimensions(settings) {
  */
 export async function testTemporalDecay(settings) {
     try {
-        const { applyTemporalDecay, getDefaultDecaySettings } = await import('../core/temporal-decay.js');
+        const { applyTemporalDecay } = await import('../core/temporal-decay.js');
         const { getDefaultDecayForType } = await import('../core/collection-metadata.js');
 
         // Test with chat defaults (enabled by default)
@@ -552,31 +552,6 @@ export async function testChunkServerSync(settings, collectionId) {
 }
 
 /**
- * Fix: Clean orphaned local metadata entries
- */
-export async function fixOrphanedMetadata(orphanedHashes) {
-    try {
-        const { deleteChunkMetadata } = await import('../core/collection-metadata.js');
-
-        let cleaned = 0;
-        for (const hash of orphanedHashes) {
-            deleteChunkMetadata(hash);
-            cleaned++;
-        }
-
-        return {
-            success: true,
-            message: `Cleaned ${cleaned} orphaned metadata entries`
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Failed to clean: ${error.message}`
-        };
-    }
-}
-
-/**
  * Test: Are there duplicate hashes in the vector store?
  * Duplicates can occur from:
  * - Native ST vectors extension double-inserting
@@ -655,87 +630,6 @@ export async function testDuplicateHashes(settings, collectionId) {
             status: 'fail',
             message: `Check failed: ${error.message}`,
             category: 'production'
-        };
-    }
-}
-
-/**
- * Fix: Remove duplicate hash entries from vector store
- * Strategy: Query to get chunk text, delete all instances, re-insert one copy
- */
-export async function fixDuplicateHashes(duplicates, collectionId, settings) {
-    try {
-        const { deleteVectorItems, insertVectorItems, queryCollection } = await import('../core/core-vector-api.js');
-
-        let fixed = 0;
-        const chunksToReinsert = [];
-
-        // First, query to get the chunk data for each duplicate hash
-        // We query with minimal text to find chunks by hash
-        for (const { hash } of duplicates) {
-            try {
-                // Query with a broad search to find chunks - we'll filter by hash
-                const result = await queryCollection(collectionId, '', 1000, settings);
-
-                if (result?.metadata) {
-                    // Find chunk with this hash
-                    const chunk = result.metadata.find(m => String(m.hash) === String(hash));
-                    if (chunk) {
-                        chunksToReinsert.push({
-                            hash: chunk.hash,
-                            text: chunk.text,
-                            index: chunk.index || 0,
-                            metadata: {
-                                source: chunk.source,
-                                messageId: chunk.messageId,
-                                chunkIndex: chunk.chunkIndex,
-                                totalChunks: chunk.totalChunks,
-                                originalMessageHash: chunk.originalMessageHash
-                            }
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn(`VectHare: Failed to get data for hash ${hash}:`, e);
-            }
-        }
-
-        // Delete ALL instances of duplicate hashes
-        const hashesToDelete = duplicates.map(d => d.hash);
-        try {
-            await deleteVectorItems(collectionId, hashesToDelete, settings);
-            console.log(`VectHare: Deleted ${hashesToDelete.length} duplicate hashes`);
-        } catch (e) {
-            console.warn('VectHare: Delete failed:', e);
-            return {
-                success: false,
-                message: `Failed to delete duplicates: ${e.message}`
-            };
-        }
-
-        // Re-insert ONE copy of each
-        if (chunksToReinsert.length > 0) {
-            try {
-                await insertVectorItems(collectionId, chunksToReinsert, settings);
-                fixed = chunksToReinsert.length;
-                console.log(`VectHare: Re-inserted ${fixed} chunks (deduplicated)`);
-            } catch (e) {
-                console.warn('VectHare: Re-insert failed:', e);
-                return {
-                    success: false,
-                    message: `Deleted duplicates but failed to re-insert: ${e.message}. Re-vectorize chat to restore.`
-                };
-            }
-        }
-
-        return {
-            success: true,
-            message: `Fixed ${fixed} duplicate hashes (deleted extras, kept one copy each)`
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Failed to fix duplicates: ${error.message}`
         };
     }
 }

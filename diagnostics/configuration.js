@@ -71,7 +71,7 @@ export function checkChatEnabled(settings) {
         const names = otherEnabledNames.length < otherEnabledCount
             ? `${otherEnabledNames.join(', ')}... (+${otherEnabledCount - otherEnabledNames.length} more)`
             : otherEnabledNames.join(', ');
-        parts.push(`Other collections: ${otherEnabledCount} enabled`);
+        parts.push(`Other collections: ${names}`);
     }
 
     return {
@@ -307,51 +307,6 @@ export async function checkTemporallyBlindChunks(settings) {
 }
 
 /**
- * Check: Chunk visualizer API readiness
- * Verifies the visualizer can perform edit/delete operations
- */
-export function checkVisualizerApiReadiness(settings) {
-    const checks = [];
-
-    // Check if settings are valid for API operations
-    if (!settings) {
-        return {
-            name: 'Visualizer API',
-            status: 'fail',
-            message: 'No settings available for visualizer operations',
-            category: 'configuration'
-        };
-    }
-
-    // Check for required source configuration
-    if (!settings.source) {
-        return {
-            name: 'Visualizer API',
-            status: 'fail',
-            message: 'No embedding source configured - cannot create/edit vectors',
-            category: 'configuration'
-        };
-    }
-
-    // Check backend configuration
-    if (!settings.vector_backend) {
-        return {
-            name: 'Visualizer API',
-            status: 'warning',
-            message: 'No backend database specified (using default)',
-            category: 'configuration'
-        };
-    }
-
-    return {
-        name: 'Visualizer API',
-        status: 'pass',
-        message: `Ready for vector operations (source: ${settings.source}, backend: ${settings.vector_backend || 'standard'})`,
-        category: 'configuration'
-    };
-}
-
-/**
  * Check: Collection ID format and UUID availability
  * Verifies that chat_metadata.integrity is available for unique collection IDs
  */
@@ -367,7 +322,6 @@ export function checkCollectionIdFormat() {
 
     // Check if chat_metadata.integrity is available
     const integrity = chat_metadata?.integrity;
-    const uuid = getChatUUID();
     const collectionId = getChatCollectionId();
 
     if (!integrity) {
@@ -717,7 +671,7 @@ export async function checkCollectionRegistryStatus(settings) {
 export async function checkChunkGroupsModule() {
     try {
         // Dynamically import to check if module is available
-        const { validateGroup, createGroup, getGroupStats } = await import('../core/chunk-groups.js');
+        const { validateGroup, createGroup } = await import('../core/chunk-groups.js');
 
         if (typeof validateGroup !== 'function') {
             return {
@@ -770,7 +724,7 @@ export async function checkChunkGroupsModule() {
  */
 export async function checkChunkGroupsValidity(settings) {
     try {
-        const { validateGroup, getGroupStats } = await import('../core/chunk-groups.js');
+        const { validateGroup } = await import('../core/chunk-groups.js');
         const { getCollectionMeta } = await import('../core/collection-metadata.js');
         const registry = getCollectionRegistry();
 

@@ -18,7 +18,6 @@ import {
     getSavedHashes,
     insertVectorItems,
     queryMultipleCollections,
-    purgeVectorIndex,
 } from './core-vector-api.js';
 import { isBackendAvailable } from '../backends/backend-manager.js';
 import { applyDecayToResults, applySceneAwareDecay } from './temporal-decay.js';
@@ -2102,26 +2101,3 @@ export async function vectorizeAll(settings, batchSize) {
     }
 }
 
-/**
- * Purges vector index for current chat
- * @param {object} settings VectHare settings
- */
-export async function purgeChatIndex(settings) {
-    if (!getCurrentChatId()) {
-        toastr.info('No chat selected', 'Purge aborted');
-        return;
-    }
-
-    const collectionId = getChatCollectionId();
-    if (!collectionId) {
-        toastr.error('Could not get collection ID', 'Purge aborted');
-        return;
-    }
-
-    if (await purgeVectorIndex(collectionId, settings)) {
-        toastr.success('Vector index purged', 'VectHare');
-        console.log('VectHare: Index purged successfully');
-    } else {
-        toastr.error('Failed to purge vector index', 'VectHare');
-    }
-}

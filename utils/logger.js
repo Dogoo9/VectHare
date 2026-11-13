@@ -40,7 +40,3 @@ export function configureLogger(options = {}) {
     if (typeof options.content === 'boolean') contentLogging = options.content;
 }
 
-export function getLoggerConfig() {
-    return { level, content: contentLogging };
-}
-

@@ -48,9 +48,6 @@ const EXPORT_VERSION = '1.0.0';
 /** File extension for VectHare exports */
 export const EXPORT_FILE_EXTENSION = '.vecthare.json';
 
-/** Maximum chunks to export at once (for progress updates) */
-const EXPORT_BATCH_SIZE = 100;
-
 // ============================================================================
 // EXPORT FUNCTIONS
 // ============================================================================
@@ -239,48 +236,6 @@ export async function exportCollection(collectionId, settings, collectionInfo = 
         progressTracker.complete(false, 'Export failed');
         throw error;
     }
-}
-
-/**
- * Exports multiple collections to a single file
- * @param {string[]} collectionIds - Collections to export
- * @param {object} settings - VectHare settings
- * @returns {Promise<object>} Export data with multiple collections
- */
-export async function exportMultipleCollections(collectionIds, settings) {
-    progressTracker.show('Exporting Collections', collectionIds.length, 'Collections');
-
-    const exports = [];
-    const errors = [];
-
-    for (let i = 0; i < collectionIds.length; i++) {
-        const collectionId = collectionIds[i];
-        progressTracker.updateProgress(i + 1, `Exporting: ${collectionId}`);
-        progressTracker.updateCurrentItem(collectionId);
-
-        try {
-            exports.push(await exportCollection(collectionId, settings));
-        } catch (error) {
-            console.error(`VectHare Export: Failed to export ${collectionId}:`, error);
-            errors.push({ collectionId, error: error.message });
-        }
-    }
-
-    progressTracker.complete(errors.length === 0, `Exported ${exports.length}/${collectionIds.length} collections`);
-
-    return {
-        version: EXPORT_VERSION,
-        exportDate: new Date().toISOString(),
-        generator: 'VectHare',
-        type: 'multi',
-        collections: exports,
-        errors: errors,
-        stats: {
-            totalCollections: exports.length,
-            totalChunks: exports.reduce((sum, e) => sum + e.chunks.length, 0),
-            failedCollections: errors.length,
-        },
-    };
 }
 
 /**
@@ -621,66 +576,6 @@ export async function importCollection(exportData, settings, options = {}) {
         progress.complete(false, 'Import failed');
         throw error;
     }
-}
-
-/**
- * Imports multiple collections from a multi-export file
- * @param {object} multiExportData - Multi-collection export data
- * @param {object} settings - VectHare settings
- * @param {object} options - Import options
- * @returns {Promise<{ success: boolean, imported: number, failed: number, results: object[] }>}
- */
-export async function importMultipleCollections(multiExportData, settings, options = {}) {
-    const collections = multiExportData.collections || [];
-
-    if (collections.length === 0) {
-        throw new Error('No collections in export file');
-    }
-
-    progressTracker.show('Importing Collections', collections.length, 'Collections');
-
-    const results = [];
-    let imported = 0;
-    let failed = 0;
-
-    for (let i = 0; i < collections.length; i++) {
-        const exportItem = collections[i];
-        const collectionId = exportItem.collection?.id;
-
-        progressTracker.updateProgress(i + 1, `Importing: ${collectionId || 'unknown'}`);
-        progressTracker.updateCurrentItem(collectionId || `Collection ${i + 1}`);
-
-        try {
-            // Don't show nested progress tracker
-            const result = await importCollectionSilent(exportItem, settings, options);
-            results.push(result);
-            imported++;
-        } catch (error) {
-            console.error(`VectHare Import: Failed to import ${collectionId}:`, error);
-            results.push({
-                success: false,
-                collectionId,
-                error: error.message,
-            });
-            failed++;
-        }
-    }
-
-    progressTracker.complete(failed === 0, `Imported ${imported}/${collections.length} collections`);
-
-    return {
-        success: failed === 0,
-        imported,
-        failed,
-        results,
-    };
-}
-
-/**
- * Silent import (no progress tracker) for batch operations
- */
-async function importCollectionSilent(exportData, settings, options = {}) {
-    return await importCollection(exportData, settings, { ...options, silent: true });
 }
 
 // ============================================================================

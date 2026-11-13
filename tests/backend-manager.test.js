@@ -59,7 +59,6 @@ vi.mock('../core/constants.js', () => ({
 import {
     resetBackendHealth,
     invalidateBackendHealth,
-    getAvailableBackends,
     recordQuery,
     recordInsert,
     recordDelete,
@@ -82,18 +81,6 @@ describe('Backend Manager', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
-    });
-
-    describe('getAvailableBackends', () => {
-        it('should return all registered backends', () => {
-            const backends = getAvailableBackends();
-
-            expect(backends).toContain('standard');
-            expect(backends).toContain('lancedb');
-            expect(backends).toContain('qdrant');
-            expect(backends).toContain('milvus');
-            expect(backends).toHaveLength(4);
-        });
     });
 
     describe('resetBackendHealth', () => {

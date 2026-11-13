@@ -329,15 +329,6 @@ export function deleteCollectionMeta(collectionId) {
     }
 }
 
-/**
- * Gets all collection metadata
- * @returns {object} Map of collectionId -> metadata
- */
-export function getAllCollectionMeta() {
-    ensureCollectionsObject();
-    return extension_settings.vecthare.collections;
-}
-
 // ============================================================================
 // ENABLED STATE (convenience wrappers)
 // ============================================================================
@@ -801,14 +792,6 @@ export function removeCollectionLock(collectionId, chatId) {
 }
 
 /**
- * Clears all locks for a collection (removes from all chats)
- * @param {string} collectionId
- */
-export function clearCollectionLock(collectionId) {
-    setCollectionLock(collectionId, null);
-}
-
-/**
  * Gets the array of locked chat IDs for a collection, or empty array if not locked
  * Includes backward compatibility for old single-value `lockedToChatId` format
  * @param {string} collectionId
@@ -824,16 +807,6 @@ export function getCollectionLocks(collectionId) {
     }
 
     return locks;
-}
-
-/**
- * Gets the first locked chat ID (for backward compat with single-lock code)
- * @param {string} collectionId
- * @returns {string|null}
- */
-export function getCollectionLock(collectionId) {
-    const locks = getCollectionLocks(collectionId);
-    return locks.length > 0 ? locks[0] : null;
 }
 
 /**
@@ -903,16 +876,6 @@ export function removeCollectionCharacterLock(collectionId, characterId) {
     update.lockedToCharacterIds = locks;
     setCollectionMeta(collectionId, update);
     console.log(`VectHare: Removed character ${characterId} from collection ${collectionId} locks`);
-}
-
-/**
- * Clears all character locks for a collection
- * @param {string} collectionId
- */
-export function clearCollectionCharacterLocks(collectionId) {
-    if (!collectionId) return;
-    setCollectionMeta(collectionId, { lockedToCharacterIds: [] });
-    console.log(`VectHare: Cleared all character locks for collection ${collectionId}`);
 }
 
 /**
@@ -989,26 +952,6 @@ export function ensureCollectionMeta(collectionId, initialData = {}) {
         };
         saveSettingsDebounced();
         console.log(`VectHare: Created metadata for new collection ${collectionId} (type: ${collectionType})`);
-    }
-}
-
-/**
- * Updates lastUsed timestamp and increments queryCount
- * Called when a collection is queried
- * @param {string} collectionId Collection identifier
- */
-export function recordCollectionUsage(collectionId) {
-    if (!collectionId) {
-        return;
-    }
-
-    ensureCollectionsObject();
-
-    const existing = extension_settings.vecthare.collections[collectionId];
-    if (existing) {
-        existing.lastUsed = Date.now();
-        existing.queryCount = (existing.queryCount || 0) + 1;
-        saveSettingsDebounced();
     }
 }
 
@@ -1281,25 +1224,6 @@ export async function filterActiveCollections(collectionIds, context) {
     return finalActiveIds;
 }
 
-// ============================================================================
-// ACTIVATION TRIGGER HELPERS
-// ============================================================================
-
-/**
- * Sets activation triggers for a collection
- * @param {string} collectionId Collection identifier
- * @param {string[]} triggers Array of trigger keywords
- * @param {object} options Optional: matchMode, caseSensitive, scanDepth, plainMatchMode
- */
-export function setCollectionTriggers(collectionId, triggers, options = {}) {
-    const update = { triggers };
-    if (options.matchMode !== undefined) update.triggerMatchMode = options.matchMode;
-    if (options.caseSensitive !== undefined) update.triggerCaseSensitive = options.caseSensitive;
-    if (options.scanDepth !== undefined) update.triggerScanDepth = options.scanDepth;
-    if (options.plainMatchMode !== undefined) update.triggerPlainMatchMode = options.plainMatchMode;
-    setCollectionMeta(collectionId, update);
-}
-
 /**
  * Gets activation triggers for a collection
  * @param {string} collectionId Collection identifier
@@ -1314,25 +1238,6 @@ export function getCollectionTriggers(collectionId) {
         scanDepth: meta.triggerScanDepth || 5,
         plainMatchMode: meta.triggerPlainMatchMode || 'word',
     };
-}
-
-/**
- * Sets the always active flag for a collection
- * @param {string} collectionId Collection identifier
- * @param {boolean} alwaysActive Whether to always activate
- */
-export function setCollectionAlwaysActive(collectionId, alwaysActive) {
-    setCollectionMeta(collectionId, { alwaysActive });
-}
-
-/**
- * Checks if a collection is set to always active
- * @param {string} collectionId Collection identifier
- * @returns {boolean} Whether collection is always active
- */
-export function isCollectionAlwaysActive(collectionId) {
-    const meta = getCollectionMeta(collectionId);
-    return meta.alwaysActive === true;
 }
 
 /**
@@ -1386,22 +1291,6 @@ export function getCollectionConditions(collectionId) {
     return meta.conditions || { enabled: false, logic: 'AND', rules: [] };
 }
 
-// ============================================================================
-// TEMPORAL DECAY HELPERS (Per-Collection)
-// ============================================================================
-
-/**
- * Default temporal decay settings
- */
-const defaultTemporalDecay = {
-    enabled: false,
-    mode: 'exponential',
-    halfLife: 50,
-    linearRate: 0.01,
-    minRelevance: 0.3,
-    sceneAware: false,
-};
-
 /**
  * Gets temporal decay settings for a collection
  * Uses type-aware defaults (chat = enabled by default)
@@ -1427,21 +1316,6 @@ export function getCollectionDecaySettings(collectionId) {
 }
 
 /**
- * Sets temporal decay settings for a collection
- * @param {string} collectionId Collection identifier
- * @param {object} decaySettings Temporal decay settings
- */
-export function setCollectionDecaySettings(collectionId, decaySettings) {
-    const existing = getCollectionMeta(collectionId);
-    const merged = {
-        ...defaultTemporalDecay,
-        ...existing.temporalDecay,
-        ...decaySettings,
-    };
-    setCollectionMeta(collectionId, { temporalDecay: merged });
-}
-
-/**
  * Checks if a collection has custom (non-default) decay settings
  * @param {string} collectionId Collection identifier
  * @returns {boolean} Whether collection has custom decay configuration
@@ -1457,7 +1331,6 @@ export function hasCustomDecaySettings(collectionId) {
  * @returns {object} Summary { isCustom, enabled, mode, description }
  */
 export function getCollectionDecaySummary(collectionId) {
-    const meta = getCollectionMeta(collectionId);
     const isCustom = hasCustomDecaySettings(collectionId);
     const settings = getCollectionDecaySettings(collectionId);
 

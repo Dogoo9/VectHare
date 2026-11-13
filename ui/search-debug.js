@@ -161,22 +161,6 @@ export function setLastSearchDebug(data) {
     });
 }
 
-/**
- * Gets the query history
- * @returns {Array<SearchDebugData>}
- */
-export function getQueryHistory() {
-    return queryHistory;
-}
-
-/**
- * Gets the last search debug data
- * @returns {SearchDebugData|null}
- */
-export function getLastSearchDebug() {
-    return lastDebugData;
-}
-
 // ============================================================================
 // MODAL UI
 // ============================================================================
@@ -226,8 +210,6 @@ function createModalHtml(data, historyIndex = 0) {
         <div class="vecthare-debug-history-tabs">
             ${queryHistory.map((q, idx) => {
                 const isActive = idx === historyIndex;
-                const tabTime = getTimeAgo(q.timestamp);
-                const tabQuery = q.query.substring(0, 20) + (q.query.length > 20 ? '...' : '');
                 const injectedCount = q.stages.injected?.length || 0;
                 const statusClass = injectedCount > 0 ? 'tab-success' : 'tab-empty';
                 return `
@@ -561,19 +543,6 @@ function renderStageChunks(chunks, stageName, data) {
             scoreDisplay = `<span class="vecthare-debug-chunk-score ${scoreClass}">${chunk.score?.toFixed(3) || 'N/A'}</span>`;
         }
 
-        // Build full metadata for expanded view
-        const fullMeta = {
-            hash: chunk.hash,
-            index: chunk.index,
-            messageAge: chunk.messageAge,
-            score: chunk.score,
-            originalScore: chunk.originalScore,
-            keywordBoost: chunk.keywordBoost,
-            decayMultiplier: chunk.decayMultiplier,
-            keywords: chunk.matchedKeywordsWithWeights || chunk.matchedKeywords || [],
-            collection: chunk.collection || chunk.collectionId,
-            metadata: chunk.metadata
-        };
 
         html += `
             <div class="vecthare-debug-chunk vecthare-debug-chunk-expandable ${wasExcluded ? 'vecthare-debug-chunk-excluded' : ''}" data-chunk-idx="${idx}">
@@ -1676,7 +1645,6 @@ async function copyDiagnosticDump() {
 // ============================================================================
 
 // Track current history index for refreshing modal
-let currentHistoryIndex = 0;
 
 function bindEvents() {
     // Close button
@@ -1701,7 +1669,6 @@ function bindEvents() {
     $('.vecthare-debug-history-tab').on('click', function() {
         const historyIndex = parseInt($(this).data('history-index'));
         if (queryHistory[historyIndex]) {
-            currentHistoryIndex = historyIndex;
             lastDebugData = queryHistory[historyIndex];
             // Refresh the modal content
             const newHtml = createModalHtml(lastDebugData, historyIndex);

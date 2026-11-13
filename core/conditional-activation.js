@@ -447,7 +447,6 @@ function evaluateFrequencyCondition(rule, context) {
 
     const maxActivations = settings.maxActivations || 1;
     const cooldownMessages = settings.cooldownMessages || 0;
-    const scope = settings.scope || 'conversation';
 
     // Get activation history for this chunk
     const chunkHash = context.currentChunkHash;
