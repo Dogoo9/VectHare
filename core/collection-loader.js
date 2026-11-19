@@ -395,7 +395,7 @@ async function discoverViaPlugin(settings) {
                 pluginCollectionData[cacheKey] = collectionData;
                 uniqueKeys.push(cacheKey);
 
-                // Also cache by sanitized version (for LanceDB lookups)
+                // Also cache by sanitized version (for sanitized-name lookups)
                 const sanitized = collectionId.replace(/[^a-zA-Z0-9_.-]/g, '_');
                 if (sanitized !== collectionId) {
                     pluginCollectionData[`${backend}:${collection.source}:${sanitized}`] = collectionData;

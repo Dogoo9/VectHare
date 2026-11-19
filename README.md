@@ -52,7 +52,6 @@ VectHare is an **advanced Retrieval-Augmented Generation (RAG) system** for Sill
 
 ### 📦 Multiple Vector Backends
 - **Standard (Vectra)**: ST's built-in file-based storage (great for getting started)
-- **LanceDB**: Disk-based, handles millions of vectors, production-ready
 - **Qdrant**: Enterprise-grade with HNSW indexing, cloud support, advanced filtering
 
 ### 📄 Multi-Content Vectorization
@@ -72,7 +71,7 @@ VectHare is an **advanced Retrieval-Augmented Generation (RAG) system** for Sill
 - View chunk counts and metadata
 - Enable/disable collections on the fly
 - Export and import collections for backup/sharing
-- Use **Duplicate collection** on a collection card to choose a name and destination: Standard (Vectra), LanceDB or Qdrant. The destination defaults to the source backend. Copies preserve stored vectors and metadata without re-embedding; Similharity and a configured destination connection are required. Names accept 1–160 letters, numbers, underscores or hyphens. Qdrant multitenancy must be off when Qdrant is involved. Milvus destinations are unavailable because its adapter uses shared storage. Verified copies start paused so you can enable them when ready; incomplete copies remain paused for review or deletion.
+- Use **Duplicate collection** on a collection card to choose a name and destination: Standard (Vectra) or Qdrant. The destination defaults to the source backend. Copies preserve stored vectors and metadata without re-embedding; Similharity and a configured destination connection are required. Names accept 1–160 letters, numbers, underscores or hyphens. Qdrant multitenancy must be off when Qdrant is involved. Milvus destinations are unavailable because its adapter uses shared storage. Verified copies start paused so you can enable them when ready; incomplete copies remain paused for review or deletion.
 - In the chunk visualizer, **Bulk select mode** shows a checkbox for each chunk. Enable or disable only the selected chunks, with changes saved immediately. **Select filtered** includes matches beyond the loaded page; selections survive sorting and filtering, and the count identifies any hidden selections.
 
 Duplicates have independent chunk settings: enable/disable switches, keywords,
@@ -139,10 +138,9 @@ Built-in diagnostic tool that checks everything and offers auto-fixes for common
 | Backend | Best For | Pros | Cons |
 |---------|----------|------|------|
 | **Standard (Vectra)** | Getting started, small datasets | No dependencies, works out of box | Slower with large datasets |
-| **LanceDB** | Medium to large datasets | Handles millions of vectors, very fast | Requires Similharity plugin |
 | **Qdrant** | Production, cloud deployments | Enterprise-grade, advanced filtering | Requires running Qdrant server |
 
-> 💡 **Need help choosing?** Start with Standard. Upgrade to LanceDB when you have 10k+ vectors.
+> 💡 **Need help choosing?** Start with Standard. Upgrade to Qdrant when you have 10k+ vectors.
 
 ---
 
@@ -215,7 +213,7 @@ That's it! VectHare will be downloaded and enabled automatically.
 
 ### Step 3: (Optional) Install Similharity Plugin
 
-**Only needed for LanceDB or Qdrant backends!**
+**Only needed for the Qdrant backend!**
 
 ```bash
 cd SillyTavern/plugins
@@ -246,7 +244,7 @@ Look for the update notification in the Extensions panel, or manually check with
 ### 🎛️ Core Settings
 | Setting | Description |
 |---------|-------------|
-| **Vector Backend** | Standard, LanceDB, or Qdrant |
+| **Vector Backend** | Standard or Qdrant |
 | **Embedding Provider** | 15+ providers supported |
 | **API URL** | Custom endpoint for local providers |
 
@@ -277,8 +275,8 @@ Look for the update notification in the Extensions panel, or manually check with
 - **Set temporally blind on character intros** so your AI never forgets who people are
 
 ### 🚀 Performance
-- **Start with Standard backend** - upgrade to LanceDB when needed
-- **Large chats (10k+ messages)?** LanceDB handles it smoothly
+- **Start with Standard backend** - upgrade to Qdrant when needed
+- **Large chats (10k+ messages)?** Qdrant handles it smoothly
 - **Lower score threshold** if memories aren't being retrieved (try 0.3)
 
 ### 🎭 Conditional Activation
@@ -309,12 +307,12 @@ Look for the update notification in the Extensions panel, or manually check with
 
 ### "Backend health check failed"
 1. Run Diagnostics to see which backend failed
-2. **LanceDB**: Ensure Similharity plugin is installed
+2. **Qdrant**: Ensure Similharity plugin is installed
 3. **Qdrant**: Ensure Qdrant server is running
 4. **Fallback**: Switch to Standard backend
 
 ### Slow performance
-1. Switch to LanceDB backend for large datasets
+1. Switch to the Qdrant backend for large datasets
 2. Increase chunk size (fewer, larger chunks)
 3. Reduce query depth and insert count
 
@@ -343,7 +341,7 @@ Detailed docs available in the `/docs` folder:
 - **Embedding Provider** (one of 15+ supported)
 
 ### Optional
-- **Similharity Plugin** - For LanceDB/Qdrant backends
+- **Similharity Plugin** - For the Qdrant backend
 - **Character Expressions** - For sprite-based emotion detection
 
 ---

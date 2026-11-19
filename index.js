@@ -39,6 +39,7 @@ import { initializeDatabaseBrowser } from './ui/database-browser.js';
 import { initializeSceneMarkers, setSceneSettings } from './ui/scene-markers.js';
 import { initializeWorldInfoIntegration, applySemanticEntriesToPrompt } from './core/world-info-integration.js';
 import { pluginRequest } from './backends/similharity-backend.js';
+import { REMOVED_BACKENDS } from './backends/backend-manager.js';
 import { configureLogger, logger } from './utils/logger.js';
 
 // VectHare modules - Cotton-Tales Integration
@@ -47,7 +48,11 @@ import './core/emotion-classifier.js';
 const settings = structuredClone(defaultSettings);
 
 // Module worker for automatic syncing
-const moduleWorker = new ModuleWorkerWrapper(() => synchronizeChat(settings, getBatchSize()));
+const moduleWorker = new ModuleWorkerWrapper(async () => {
+    const result = await synchronizeChat(settings, getBatchSize());
+    // Work through a recall backlog in small steps; generation pauses it.
+    if (settings.chat_recall_enabled && result?.remaining > 0 && result.chunksCreated > 0) onChatEvent();
+});
 
 // Batch size based on provider
 const getBatchSize = () => ['transformers', 'ollama'].includes(settings.source) ? 1 : 5;
@@ -152,6 +157,12 @@ jQuery(async () => {
     });
 
     configureLogger({ level: settings.log_level, content: settings.log_content === true });
+
+    if (REMOVED_BACKENDS.includes(settings.vector_backend)) {
+        toastr.warning(`The ${settings.vector_backend} backend was removed. VectHare is using Standard storage instead.`, 'VectHare');
+        settings.vector_backend = 'standard';
+        extension_settings.vecthare.vector_backend = 'standard';
+    }
 
     // Migrate old scattered enabled keys to new collections structure
     const migrationResult = migrateOldEnabledKeys();
@@ -260,6 +271,7 @@ jQuery(async () => {
         logger.debug('VectHare: Chat changed, refreshing UI state');
         refreshAutoSyncCheckbox(settings);
         tagOpenChatCollections();
+        if (settings.chat_recall_enabled) onChatEvent();
     });
 
     logger.info('Initialized successfully');

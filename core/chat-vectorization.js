@@ -9,7 +9,7 @@
  * ============================================================================
  */
 
-import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, extension_prompts } from '../../../../../script.js';
+import { getCurrentChatId, is_send_press, setExtensionPrompt, substituteParams, extension_prompts, extension_prompt_types } from '../../../../../script.js';
 import { getContext } from '../../../../extensions.js';
 import { getStringHash as calculateHash, waitUntilCondition } from '../../../../utils.js';
 import { extractChatKeywords, extractBM25Keywords } from './keyword-boost.js';
@@ -38,7 +38,7 @@ import { createDebugData, setLastSearchDebug, addTrace, recordChunkFate } from '
 import { LRUCache } from '../utils/data-structures.js';
 import '../../../../../script.js'; // side effects only
 import { EXTENSION_PROMPT_TAG, HASH_CACHE_SIZE } from './constants.js';
-import { resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
+import { estimateChunkTokens, isNamedChunk, resolveRetrievalBudgets, selectFinalChunks } from './retrieval-budget.js';
 import { fuseCollectionResults } from './collection-fusion.js';
 import { configureLogger, logger } from '../utils/logger.js';
 // Import from collection-ids.js - single source of truth for collection ID operations
@@ -57,6 +57,16 @@ const hashCache = new LRUCache(HASH_CACHE_SIZE);
 
 // Synchronization state
 let syncBlocked = false;
+
+// Lore kept byte-identical between refreshes so the backend can reuse its prompt cache.
+let stickyLore = null;
+const DELTA_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_delta`;
+const RECALL_PROMPT_TAG = `${EXTENSION_PROMPT_TAG}_recall`;
+
+/** Forgets the sticky lore set (next generation selects it again). */
+export function resetStickyLore() {
+    stickyLore = null;
+}
 
 // ============================================================================
 // RE-EXPORTS from collection-ids.js for backwards compatibility
@@ -275,6 +285,37 @@ export function filterManuallyDisabledChunks(chunks) {
  * score threshold. Entry/scene/condition filtering is performed before this
  * helper is called, so a disabled entry is never re-enabled by its keyword.
  */
+function chunkKeywordMatches(chunk, textLower, extracted = new Set()) {
+    const storedKeywords = getChunkMetadata(chunk.hash, chunk.collectionId)?.keywords;
+    const rawKeywords = storedKeywords ?? chunk.metadata?.keywords ?? chunk.keywords ?? [];
+    return rawKeywords
+        .filter(keyword => typeof keyword !== 'object' || keyword.enabled !== false)
+        .map(keyword => (typeof keyword === 'object' ? keyword.text : keyword)?.trim().toLowerCase())
+        .filter(Boolean)
+        .filter(keyword => {
+            if (extracted.has(keyword)) return true;
+            const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(textLower);
+        });
+}
+
+/**
+ * Entries named in recent story memory outrank plain semantic hits, but stay
+ * behind entries named in the current messages.
+ */
+export function markMemoryKeywordMatches(chunks, memoryText, threshold = 0) {
+    const memoryLower = String(memoryText || '').toLowerCase();
+    if (!memoryLower) return 0;
+    let matchedCount = 0;
+    for (const chunk of chunks) {
+        if (chunk.keywordForceInjected || chunkKeywordMatches(chunk, memoryLower).length === 0) continue;
+        chunk.memoryKeywordMatched = true;
+        chunk.score = Math.max(chunk.score ?? 0, threshold);
+        matchedCount++;
+    }
+    return matchedCount;
+}
+
 export function promoteKeywordMatches(chunks, queryText, extractedKeywords = []) {
     const queryLower = String(queryText || '').toLowerCase();
     const extracted = new Set(extractedKeywords.map(keyword =>
@@ -283,17 +324,7 @@ export function promoteKeywordMatches(chunks, queryText, extractedKeywords = [])
 
     let matchedCount = 0;
     for (const chunk of chunks) {
-        const storedKeywords = getChunkMetadata(chunk.hash, chunk.collectionId)?.keywords;
-        const rawKeywords = storedKeywords ?? chunk.metadata?.keywords ?? chunk.keywords ?? [];
-        const matchedKeywords = rawKeywords
-            .filter(keyword => typeof keyword !== 'object' || keyword.enabled !== false)
-            .map(keyword => (typeof keyword === 'object' ? keyword.text : keyword)?.trim().toLowerCase())
-            .filter(Boolean)
-            .filter(keyword => {
-                if (extracted.has(keyword)) return true;
-                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(queryLower);
-            });
+        const matchedKeywords = chunkKeywordMatches(chunk, queryLower, extracted);
 
         if (matchedKeywords.length === 0) continue;
 
@@ -455,13 +486,14 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
 
     // Check per-collection autoSync setting instead of global enabled_chats
     const { isCollectionAutoSyncEnabled } = await import('./collection-metadata.js');
-    if (!bypassAutoSync && !isCollectionAutoSyncEnabled(collectionId)) {
+    const chatRecall = settings.chat_recall_enabled === true;
+    if (!bypassAutoSync && !chatRecall && !isCollectionAutoSyncEnabled(collectionId)) {
         return { remaining: -1, messagesProcessed: 0, chunksCreated: 0 };
     }
 
     // Per Scene strategy: don't auto-vectorize on message events
     // Scenes are vectorized when user marks scene end (via createSceneChunk)
-    if (settings.chunking_strategy === 'per_scene') {
+    if (settings.chunking_strategy === 'per_scene' && !chatRecall) {
         return { remaining: 0, messagesProcessed: 0, chunksCreated: 0 };
     }
 
@@ -491,18 +523,21 @@ export async function synchronizeChat(settings, batchSize = 5, bypassAutoSync = 
         if (existingHashes.size > 0) tagChatCollection(registryKey);
 
         // Step 2: Build list of messages NOT in DB
-        const strategy = settings.chunking_strategy || 'per_message';
+        // Recall maps each hit back to one message; grouped chunks cannot do that.
+        const strategy = chatRecall ? 'per_message' : (settings.chunking_strategy || 'per_message');
         const strategyBatchSize = settings.batch_size || 4;
 
-        // Collect all non-system messages with their data
+        // Collect all non-system messages with their data. Messages Summaryception
+        // hid are still real history, so they stay searchable.
         // PERF: Use index from loop instead of indexOf() to avoid O(n²)
         const allMessages = [];
         for (let i = 0; i < context.chat.length; i++) {
             const msg = context.chat[i];
-            if (msg.is_system) continue;
+            if (msg.is_system && !msg.extra?.sc_ghosted) continue;
             // Apply text cleaning to remove HTML tags, metadata blocks, etc.
             const rawText = String(substituteParams(msg.mes));
             const text = cleanText(rawText);
+            if (!text.trim()) continue; // An empty item can only fail and stall the backlog.
             allMessages.push({
                 text,
                 hash: getStringHash(substituteParams(getTextWithoutAttachments(msg))),
@@ -647,29 +682,95 @@ function gatherCollectionsToQuery(settings) {
             return candidate.backend && candidate.collectionId === parsed.collectionId;
         });
     });
-    return applyChatCollectionPolicy(deduplicated, currentChatId);
+    return withChatRecallCollection(applyChatCollectionPolicy(deduplicated, currentChatId), settings);
+}
+
+/** Adds the current chat's collection when chat recall is on. */
+function withChatRecallCollection(collectionIds, settings) {
+    const chatCollectionId = settings.chat_recall_enabled === true ? getChatCollectionId() : null;
+    if (!chatCollectionId || !isCollectionEnabled(chatCollectionId)
+        || collectionIds.some(id => parseRegistryKey(id).collectionId === chatCollectionId)) {
+        return collectionIds;
+    }
+    return [...collectionIds, chatCollectionId];
+}
+
+function isChatChunk(chunk) {
+    return parseCollectionId(parseRegistryKey(chunk.collectionId).collectionId).type === 'chat';
 }
 
 /**
- * Stage 2: Build the search query from recent messages
+ * Stage 2: Build the searches. A long joined query averages away what the
+ * current turn is about, so the user's message and the end of the latest reply
+ * are searched separately.
  * @param {object[]} chat Current chat messages
  * @param {object} settings VectHare settings
- * @returns {string} Query text
+ * @returns {string[]} Distinct non-empty query texts
  */
-function buildSearchQuery(chat, settings) {
-    const recentMessages = chat
-        .filter(x => !x.is_system)
-        .reverse()
-        .slice(0, settings.query)
-        .map(x => substituteParams(x.mes));
+export function buildSearchQueries(chat, settings, memoryText = '') {
+    const visible = chat.filter(x => !x.is_system && x.mes);
+    const latestUser = visible.findLast(x => x.is_user);
+    const latestReply = visible.findLast(x => !x.is_user);
+    const tailChars = Math.max(0, Math.trunc(settings.query_tail_chars ?? 600));
+    const queries = [
+        latestUser ? substituteParams(latestUser.mes).trim() : '',
+        latestReply && tailChars > 0 ? substituteParams(latestReply.mes).slice(-tailChars).trim() : '',
+        memoryText,
+    ];
+    return [...new Set(queries.filter(Boolean))];
+}
 
-    return recentMessages.join('\n').trim();
+/**
+ * The newest part of the memory Summaryception registered for this prompt. Its
+ * block is chronological, so the end is the most recent story.
+ */
+export function readSummaryMemory(settings) {
+    const limit = Math.max(0, Math.trunc(settings.summary_context_chars ?? 1500));
+    const memory = String(extension_prompts?.summaryception?.value || '').trim();
+    if (!limit || !memory) return '';
+    if (memory.length <= limit) return memory;
+    const tail = memory.slice(-limit);
+    const lineStart = tail.indexOf('\n');
+    return (lineStart >= 0 ? tail.slice(lineStart + 1) : tail).trim();
+}
+
+/** All memory Summaryception registered, so characters stay known after their messages are hidden. */
+export function readSummaryKeywordText(settings) {
+    if (Math.trunc(settings.summary_context_chars ?? 1500) <= 0) return '';
+    return String(extension_prompts?.summaryception?.value || '');
+}
+
+/** Text that exact entry keywords are matched against. */
+export function buildKeywordScanText(chat, settings) {
+    const depth = Math.max(0, Math.trunc(settings.keyword_scan_messages ?? 20));
+    if (depth === 0) return '';
+    return chat.filter(x => !x.is_system && x.mes).slice(-depth).map(x => substituteParams(x.mes)).join('\n');
+}
+
+/** Keeps each chunk's best-scoring hit per collection across several searches. */
+function mergeBestQueryResults(resultMaps, collectionIds) {
+    const merged = {};
+    for (const collectionId of collectionIds) {
+        const best = new Map();
+        let error;
+        for (const result of resultMaps.map(map => map[collectionId]).filter(Boolean)) {
+            error ??= result.error;
+            result.hashes.forEach((hash, idx) => {
+                const meta = result.metadata[idx];
+                const rank = meta.score ?? meta.bm25Score ?? 0;
+                if (!best.has(hash) || rank > best.get(hash).rank) best.set(hash, { hash, meta, rank });
+            });
+        }
+        const rows = [...best.values()].sort((a, b) => b.rank - a.rank);
+        merged[collectionId] = { hashes: rows.map(r => r.hash), metadata: rows.map(r => r.meta), ...(rows.length ? {} : { error }) };
+    }
+    return merged;
 }
 
 /**
  * Stage 3: Query all active collections and merge results
  * @param {string[]} activeCollections Collections that passed activation filters
- * @param {string} queryText Search query
+ * @param {string|string[]} queryText One search, or several whose hits are merged
  * @param {object} settings VectHare settings
  * @param {object[]} chat Current chat messages
  * @param {object} debugData Debug tracking object
@@ -697,25 +798,25 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
     }
 
     const backendStart = performance.now();
-    let resultMap = {};
-    try {
-        resultMap = await queryMultipleCollections(
-            activeCollections,
-            queryText,
-            candidateKMax,
-            // Threshold locally after keyword promotion. Applying it in the
-            // backend would discard low-vector-score keyword hits before they
-            // can be promoted to an authoritative 100% match.
-            0,
-            settings,
-        );
-    } catch (error) {
+    const queries = Array.isArray(queryText) ? queryText : [queryText];
+    // Threshold locally after keyword promotion. Applying it in the backend
+    // would discard low-vector-score keyword hits before they can be promoted
+    // to an authoritative 100% match.
+    const outcomes = await Promise.allSettled(queries.map(query => queryMultipleCollections(
+        activeCollections, query, candidateKMax, 0, settings,
+    )));
+    const resultMaps = outcomes.filter(outcome => outcome.status === 'fulfilled').map(outcome => outcome.value);
+    let resultMap;
+    if (resultMaps.length === 0) {
         // A request-wide failure is reported for every collection; per-collection
         // failures are represented by the backend as empty results with `error`.
-        for (const collectionId of activeCollections) {
-            resultMap[collectionId] = { hashes: [], metadata: [], error: error.message };
-        }
+        const message = outcomes[0]?.reason?.message;
+        resultMap = Object.fromEntries(activeCollections.map(id => [id, { hashes: [], metadata: [], error: message }]));
+    } else {
+        resultMap = resultMaps.length === 1 ? resultMaps[0] : mergeBestQueryResults(resultMaps, activeCollections);
     }
+    const queryEmbeddingMs = resultMaps.reduce((sum, map) => sum + (map._timings?.queryEmbeddingMs || 0), 0);
+    const reportedBackendMs = resultMaps.length ? resultMaps.reduce((sum, map) => sum + (map._timings?.backendSearchMs || 0), 0) : null;
     const backendSearchMs = performance.now() - backendStart;
     const normalizationStart = performance.now();
 
@@ -845,8 +946,8 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
 
     const normalizationMs = performance.now() - normalizationStart;
     const timings = {
-        queryEmbeddingMs: resultMap._timings?.queryEmbeddingMs || 0,
-        backendSearchMs: resultMap._timings?.backendSearchMs ?? backendSearchMs,
+        queryEmbeddingMs,
+        backendSearchMs: reportedBackendMs || backendSearchMs,
         resultNormalizationMs: normalizationMs,
         totalRetrievalMs: performance.now() - totalStart,
     };
@@ -1702,6 +1803,107 @@ function injectChunksIntoPrompt(chunksToInject, settings, debugData) {
     };
 }
 
+/**
+ * Picks hidden messages to bring back word for word. The text comes from the
+ * live chat, so edited or swiped-away versions can never be injected.
+ */
+export function selectRecallChunks(chunks, visibleChat, settings, fullChat = getContext().chat ?? visibleChat) {
+    const messageHash = msg => getStringHash(substituteParams(getTextWithoutAttachments(msg)));
+    const visibleHashes = new Set(visibleChat.filter(msg => msg?.mes).map(messageHash));
+    const hiddenByHash = new Map();
+    fullChat.forEach((msg, index) => {
+        if (!msg?.mes || (msg.is_system && !msg.extra?.sc_ghosted)) return;
+        const hash = messageHash(msg);
+        if (!visibleHashes.has(hash) && !hiddenByHash.has(String(hash))) hiddenByHash.set(String(hash), { msg, index });
+    });
+
+    const limit = Math.max(0, Math.trunc(settings.chat_recall_k ?? 3));
+    let remainingChars = Math.max(0, Math.trunc(settings.chat_recall_max_chars ?? 8000));
+    const recalled = [];
+    const used = new Set();
+    for (const chunk of [...chunks].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))) {
+        if (recalled.length >= limit) break;
+        const source = hiddenByHash.get(String(chunk.hash));
+        if (!source || used.has(source)) continue;
+        const text = `[Recalled from earlier in this chat — message ${source.index}]\n${substituteParams(source.msg.mes).trim()}`;
+        if (text.length > remainingChars) continue;
+        remainingChars -= text.length;
+        used.add(source);
+        recalled.push({ ...chunk, text, messageIndex: source.index });
+    }
+    return recalled.sort((a, b) => a.messageIndex - b.messageIndex);
+}
+
+function compareStableChunks(a, b) {
+    const left = `${a.collectionId}\0${a.hash}`;
+    const right = `${b.collectionId}\0${b.hash}`;
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Returns the lore to reinject, reselecting only when the prompt cache is already lost or stale. */
+function resolveStickyLore(selected, settings, finalK, activeCollections) {
+    const fullChat = getContext().chat ?? [];
+    const signature = JSON.stringify([
+        getCurrentChatId(),
+        fullChat.filter(msg => msg?.is_system).length,
+        [...activeCollections].sort(),
+        finalK,
+        settings.position, settings.depth, settings.score_threshold,
+        settings.rag_context, settings.rag_xml_tag,
+        settings.query_tail_chars, settings.keyword_scan_messages, settings.embedding_query_prefix,
+        settings.summary_context_chars, settings.lore_max_tokens,
+    ]);
+    // Counting user messages leaves swipes and regenerates out of the age.
+    const userTurns = fullChat.filter(msg => msg?.is_user).length;
+    const age = stickyLore ? userTurns - stickyLore.userTurns : 0;
+    const stale = !stickyLore
+        || stickyLore.signature !== signature
+        || age < 0
+        || age >= Math.max(1, Math.trunc(settings.sticky_max_age_turns ?? 8))
+        || filterManuallyDisabledChunks(stickyLore.chunks).length !== stickyLore.chunks.length;
+    if (stale) {
+        // An empty pick may be a passing backend failure, so it is never kept.
+        stickyLore = selected.length
+            ? { signature, userTurns, chunks: [...selected].sort(compareStableChunks) }
+            : null;
+    }
+    return stickyLore?.chunks ?? [];
+}
+
+/**
+ * Splits selected chunks into the block that must stay byte-identical, small
+ * per-turn additions, and recalled chat messages.
+ */
+function planInjection(chunks, chat, settings, finalK, activeCollections) {
+    const recallOn = settings.chat_recall_enabled === true;
+    const recall = recallOn ? selectRecallChunks(chunks.filter(isChatChunk), chat, settings) : [];
+    const selected = selectFinalChunks(recallOn ? chunks.filter(chunk => !isChatChunk(chunk)) : chunks, finalK, { maxTokens: settings.lore_max_tokens });
+    if (settings.sticky_lore === false) return { stable: selected, delta: [], recall };
+
+    const lore = selected.filter(chunk => !isChatChunk(chunk));
+    const stable = resolveStickyLore(lore, settings, finalK, activeCollections);
+    const stableTexts = new Set(stable.map(chunk => chunk.text));
+    const deltaLimit = Math.max(0, Math.trunc(settings.sticky_delta_k ?? 4));
+    const deltaMaxTokens = Math.max(0, Math.trunc(settings.sticky_delta_max_tokens ?? 1200));
+    let deltaTokens = 0;
+    let semanticAdded = 0;
+    // A newly named character must appear now, whatever its size.
+    const newLore = lore.filter(chunk => !stableTexts.has(chunk.text)).filter(chunk => {
+        if (isNamedChunk(chunk)) return true;
+        const cost = estimateChunkTokens(chunk);
+        if (semanticAdded >= deltaLimit || (deltaMaxTokens > 0 && deltaTokens + cost > deltaMaxTokens)) return false;
+        semanticAdded++;
+        deltaTokens += cost;
+        return true;
+    });
+    const delta = [...newLore, ...selected.filter(isChatChunk)];
+    return { stable, delta, recall };
+}
+
+function injectInChatBlock(tag, text) {
+    setExtensionPrompt(tag, text, extension_prompt_types.IN_CHAT, 1, false);
+}
+
 // ============================================================================
 // MAIN ORCHESTRATOR
 // ============================================================================
@@ -1736,6 +1938,8 @@ export async function rearrangeChat(chat, settings, type) {
                 setExtensionPrompt(posTag, '', 0, 0, false);
             }
         }
+        injectInChatBlock(DELTA_PROMPT_TAG, '');
+        injectInChatBlock(RECALL_PROMPT_TAG, '');
 
         if (!getCurrentChatId() || !Array.isArray(chat)) {
             logger.debug('VectHare: No chat selected');
@@ -1767,15 +1971,18 @@ export async function rearrangeChat(chat, settings, type) {
         }
 
         // === STAGE 2: Build search query ===
-        const queryText = buildSearchQuery(chat, settings);
-        if (queryText.length === 0) {
+        const memoryText = readSummaryMemory(settings);
+        const searchQueries = buildSearchQueries(chat, settings, memoryText);
+        const queryText = searchQueries.join('\n');
+        if (searchQueries.length === 0) {
             logger.debug('VectHare: No text to query');
             return;
         }
 
         // === STAGE 2.5: Extract keywords from query message ===
         const extractionLevel = settings.keyword_extraction_level || 'balanced';
-        const queryKeywords = extractChatKeywords(queryText, {
+        const keywordScanText = buildKeywordScanText(chat, settings);
+        const queryKeywords = extractChatKeywords(keywordScanText, {
             level: extractionLevel,
             baseWeight: settings.keyword_boost_base_weight || 1.5
         });
@@ -1796,7 +2003,9 @@ export async function rearrangeChat(chat, settings, type) {
                 collectionDecisions
             });
             searchContext.collectionDecisions = collectionDecisions;
-            activeCollections = await filterActiveCollections(collectionsToQuery, searchContext);
+            activeCollections = withChatRecallCollection(
+                await filterActiveCollections(collectionsToQuery, searchContext), settings,
+            );
         }
 
         // Allow WI-only mode even if no regular collections pass filters
@@ -1840,7 +2049,7 @@ export async function rearrangeChat(chat, settings, type) {
 
         // === STAGE 4: Query all collections and merge results ===
         const backendStarted = performance.now();
-        let chunks = await queryAndMergeCollections(activeCollections, queryText, settings, chat, debugData);
+        let chunks = await queryAndMergeCollections(activeCollections, searchQueries, settings, chat, debugData);
         const backendLatencyMs = performance.now() - backendStarted;
         const candidatesRetrieved = chunks.length;
 
@@ -1852,7 +2061,10 @@ export async function rearrangeChat(chat, settings, type) {
 
         // === STAGE 4.3: Boost chunks with matching query keywords ===
         if (chunks.length > 0) {
-            const keywordMatchCount = promoteKeywordMatches(chunks, queryText, queryKeywordTexts);
+            // Recalled messages compete on meaning; their generated keywords must not force them in.
+            const promotable = settings.chat_recall_enabled === true ? chunks.filter(chunk => !isChatChunk(chunk)) : chunks;
+            const keywordMatchCount = promoteKeywordMatches(promotable, keywordScanText, queryKeywordTexts);
+            markMemoryKeywordMatches(promotable, readSummaryKeywordText(settings), settings.score_threshold || 0);
 
             for (const chunk of chunks.filter(item => item.keywordForceInjected)) {
                 addTrace(debugData, 'keyword_boost', `Chunk promoted by ${chunk.matchedQueryKeywords.length} keyword(s)`, {
@@ -1944,7 +2156,8 @@ export async function rearrangeChat(chat, settings, type) {
         // The injection limit is deliberately enforced only now, after the last
         // ranking stage. Mandatory/group-linked members consume this same budget.
         const { toInject: freshChunks, skipped: skippedDuplicates } = deduplicateChunks(chunks, chat, settings, debugData);
-        const chunksToInject = selectFinalChunks(freshChunks, finalK);
+        const { stable, delta, recall } = planInjection(freshChunks, chat, settings, finalK, activeCollections);
+        const chunksToInject = [...stable, ...delta, ...recall];
 
         logger.debug(`[VectHare Deduplication] After deduplication: ${chunksToInject.length} to inject, ${skippedDuplicates.length} skipped`);
         if (skippedDuplicates.length > 0) {
@@ -1974,7 +2187,15 @@ export async function rearrangeChat(chat, settings, type) {
         logger.debug(`[VectHare Deduplication] ✅ ${chunksToInject.length} chunks will proceed to injection`);
 
         // === STAGE 10: Inject into prompt ===
-        const injection = injectChunksIntoPrompt(chunksToInject, settings, debugData);
+        const injection = stable.length ? injectChunksIntoPrompt(stable, settings, debugData) : { verified: true, text: '' };
+        const deltaText = delta.length ? buildNestedInjectionText(delta, settings) : '';
+        const recallText = recall.map(chunk => chunk.text).join('\n\n');
+        injectInChatBlock(DELTA_PROMPT_TAG, deltaText);
+        injectInChatBlock(RECALL_PROMPT_TAG, recallText);
+        [...delta, ...recall].forEach(chunk => recordChunkFate(debugData, chunk.hash, 'final', 'injected', null, {
+            score: chunk.score, collectionId: chunk.collectionId, position: extension_prompt_types.IN_CHAT, depth: 1,
+        }));
+        injection.text = [injection.text, deltaText, recallText].filter(Boolean).join('\n\n---\n\n');
 
         logger.debug(`\n✅ VectHare: Successfully injected ${chunksToInject.length} chunk(s) into prompt`);
         logger.debug(`   Verification: ${injection.verified ? '✓ PASSED' : '✗ FAILED'}`);

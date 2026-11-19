@@ -3,7 +3,7 @@
  * CORE VECTOR API CLIENT
  * ============================================================================
  * Abstraction layer for vector operations.
- * Routes to different backends: ST's Vectra API, LanceDB, or Qdrant.
+ * Routes to different backends: ST's Vectra API or Qdrant.
  *
  * Functions:
  * - getVectorsRequestBody() - Builds request body for embedding providers
@@ -299,7 +299,7 @@ export function getVectorsRequestBody(args = {}, settings) {
             // the browser's text-generation URL here breaks their default endpoint
             // on clients where that connection has never been configured.
             const backend = storageSettings(settings).vector_backend;
-            const usesServerDefault = ['qdrant', 'lancedb', 'milvus'].includes(backend);
+            const usesServerDefault = backend === 'qdrant';
             if (!body.apiUrl && (settings.use_alt_endpoint || !usesServerDefault)) {
                 throw new Error('Configure the llama.cpp embedding server URL in SillyTavern or VectHare alternate endpoint settings.');
             }

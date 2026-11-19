@@ -453,11 +453,6 @@ function bindSettingsEvents(settings, callbacks) {
             } else {
                 $('#vecthare_qdrant_settings').hide();
             }
-            if (settings.vector_backend === 'milvus') {
-                $('#vecthare_milvus_settings').show();
-            } else {
-                $('#vecthare_milvus_settings').hide();
-            }
 
             logger.debug(`VectHare: Vector backend changed to ${settings.vector_backend}`);
             // Reset health cache so new backend gets properly initialized
@@ -548,70 +543,6 @@ function bindSettingsEvents(settings, callbacks) {
     // Show Qdrant settings if backend is qdrant
     if (settings.vector_backend === 'qdrant') {
         $('#vecthare_qdrant_settings').show();
-    }
-
-    // Milvus settings
-    $('#vecthare_milvus_host')
-        .val(settings.milvus_host || 'localhost')
-        .on('input', function() {
-            settings.milvus_host = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_port')
-        .val(settings.milvus_port || 19530)
-        .on('input', function() {
-            const value = parseInt($(this).val());
-            settings.milvus_port = isNaN(value) ? 19530 : value;
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_username')
-        .val(settings.milvus_username || '')
-        .on('input', function() {
-            settings.milvus_username = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_password')
-        .val(settings.milvus_password || '')
-        .on('input', function() {
-            settings.milvus_password = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_token')
-        .val(settings.milvus_token || '')
-        .on('input', function() {
-            settings.milvus_token = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_dimensions')
-        .val(settings.milvus_dimensions || '')
-        .on('input', function() {
-            const value = parseInt($(this).val());
-            settings.milvus_dimensions = isNaN(value) ? '' : value;
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    $('#vecthare_milvus_address')
-        .val(settings.milvus_address || '')
-        .on('input', function() {
-            settings.milvus_address = String($(this).val());
-            applySettingsSnapshot(settings);
-            saveSettingsDebounced();
-        });
-
-    // Show Milvus settings if backend is milvus
-    if (settings.vector_backend === 'milvus') {
-        $('#vecthare_milvus_settings').show();
     }
 
     // Embedding provider
@@ -782,6 +713,33 @@ function bindSettingsEvents(settings, callbacks) {
             applySettingsSnapshot(settings);
             saveSettingsDebounced();
         });
+
+    for (const [id, key, fallback] of [
+        ['#vecthare_sticky_lore', 'sticky_lore', true],
+        ['#vecthare_chat_recall_enabled', 'chat_recall_enabled', false],
+    ]) {
+        $(id)
+            .prop('checked', settings[key] ?? fallback)
+            .on('change', function() {
+                settings[key] = $(this).prop('checked');
+                applySettingsSnapshot(settings);
+                saveSettingsDebounced();
+            });
+    }
+
+    for (const [id, key, fallback] of [
+        ['#vecthare_lore_max_tokens', 'lore_max_tokens', 8000],
+        ['#vecthare_summary_context_chars', 'summary_context_chars', 1500],
+    ]) {
+        $(id)
+            .val(settings[key] ?? fallback)
+            .on('input', function() {
+                const value = parseInt($(this).val());
+                settings[key] = Number.isNaN(value) ? fallback : Math.max(0, value);
+                applySettingsSnapshot(settings);
+                saveSettingsDebounced();
+            });
+    }
 
     // Query depth (how many recent messages to include in search query)
     $('#vecthare_query_depth')

@@ -120,6 +120,15 @@ describe('Backend Manager', () => {
 // =============================================================================
 
 describe('Backend Metrics Tracking', () => {
+    it('treats removed backends as standard storage', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        recordQuery('milvus', 1);
+        recordQuery('milvus', 1);
+        expect(getBackendMetrics().backends.some(b => b.name === 'milvus')).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
+
     // Note: Metrics state persists across tests in the same run,
     // so we test incremental changes rather than absolute values
 
@@ -194,11 +203,11 @@ describe('Backend Metrics Tracking', () => {
 
     describe('recordDelete', () => {
         it('should increment delete count', () => {
-            recordDelete('milvus', 5);
-            recordDelete('milvus', 3);
+            recordDelete('custom-a', 5);
+            recordDelete('custom-a', 3);
 
             const metrics = getBackendMetrics();
-            const milvusMetrics = metrics.backends.find(b => b.name === 'milvus');
+            const milvusMetrics = metrics.backends.find(b => b.name === 'custom-a');
 
             expect(milvusMetrics).toBeDefined();
             expect(milvusMetrics.deletes).toBeGreaterThanOrEqual(8);
@@ -208,10 +217,10 @@ describe('Backend Metrics Tracking', () => {
     describe('recordError', () => {
         it('should record error with message', () => {
             const error = new Error('Connection failed');
-            recordError('lancedb', error);
+            recordError('custom-b', error);
 
             const metrics = getBackendMetrics();
-            const lanceMetrics = metrics.backends.find(b => b.name === 'lancedb');
+            const lanceMetrics = metrics.backends.find(b => b.name === 'custom-b');
 
             expect(lanceMetrics).toBeDefined();
             expect(lanceMetrics.errors).toBeGreaterThanOrEqual(1);
@@ -230,7 +239,7 @@ describe('Backend Metrics Tracking', () => {
 
         it('should track global last error', () => {
             recordError('standard', 'First error');
-            recordError('lancedb', 'Second error');
+            recordError('custom-b', 'Second error');
 
             const metrics = getBackendMetrics();
             expect(metrics.lastError.message).toBe('Second error');
@@ -240,16 +249,16 @@ describe('Backend Metrics Tracking', () => {
     describe('recordHealthCheck', () => {
         it('should record health check results', () => {
             const beforeMetrics = getBackendMetrics();
-            const milvusBefore = beforeMetrics.backends.find(b => b.name === 'milvus');
+            const milvusBefore = beforeMetrics.backends.find(b => b.name === 'custom-a');
             const passedBefore = milvusBefore?.healthChecksPassed || 0;
             const failedBefore = milvusBefore?.healthChecksFailed || 0;
 
-            recordHealthCheck('milvus', true);
-            recordHealthCheck('milvus', true);
-            recordHealthCheck('milvus', false);
+            recordHealthCheck('custom-a', true);
+            recordHealthCheck('custom-a', true);
+            recordHealthCheck('custom-a', false);
 
             const afterMetrics = getBackendMetrics();
-            const milvusAfter = afterMetrics.backends.find(b => b.name === 'milvus');
+            const milvusAfter = afterMetrics.backends.find(b => b.name === 'custom-a');
 
             expect(milvusAfter.healthChecksPassed).toBe(passedBefore + 2);
             expect(milvusAfter.healthChecksFailed).toBe(failedBefore + 1);

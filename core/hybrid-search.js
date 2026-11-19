@@ -5,14 +5,15 @@
  * True hybrid search combining dense vector similarity with full-text (BM25)
  * search using Reciprocal Rank Fusion (RRF) or weighted linear combination.
  *
- * Supports both native backend hybrid search (Qdrant/Milvus) and client-side
- * fusion for backends without native support (Standard/LanceDB).
+ * Supports both native backend hybrid search (Qdrant) and client-side
+ * fusion for backends without native support (Standard).
  *
  * @version 1.0.0
  * ============================================================================
  */
 
 import { getBackend } from '../backends/backend-manager.js';
+import { extractChatKeywords } from './keyword-boost.js';
 import { createBM25Scorer, tokenize } from './bm25-scorer.js';
 import { loadLexicalIndex, searchLexicalIndex } from './lexical-index.js';
 import { collectionStorageKey, storageSettings } from './collection-portability.js';
@@ -63,7 +64,10 @@ export async function hybridSearch(collectionId, searchText, topK, settings, opt
                 vectorWeight,
                 textWeight,
                 fusionMethod,
-                rrfK
+                rrfK,
+                keywords: settings.keyword_extraction_level === 'off'
+                    ? []
+                    : extractChatKeywords(searchText, { settings }).map(keyword => keyword.text),
             });
         } catch (error) {
             console.warn(`[HybridSearch] Native hybrid failed, falling back to client-side:`, error.message);

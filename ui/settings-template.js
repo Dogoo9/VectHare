@@ -34,15 +34,11 @@ export function getSettingsHtml() {
                             </label>
                             <select id="vecthare_vector_backend" class="vecthare-select">
                                 <option value="standard">Standard (ST's Vectra - file-based)</option>
-                                <option value="lancedb">LanceDB (disk-based, scalable)</option>
                                 <option value="qdrant">Qdrant (production vector search)</option>
-                                <option value="milvus">Milvus (popular open source engine)</option>
                             </select>
                             <small class="vecthare-help-text" style="display: block; margin-top: -8px; margin-bottom: 16px; opacity: 0.7; font-size: 0.85em; line-height: 1.5;">
                                 • Standard: ST's built-in Vectra (best for <100k vectors)<br>
-                                • LanceDB: Disk-based, handles millions of vectors (requires plugin)<br>
-                                • Qdrant: Production-grade with HNSW, filtering, cloud support<br>
-                                • Milvus: High-performance, scalable vector database
+                                • Qdrant: Production-grade with HNSW, filtering, cloud support
                             </small>
 
                             <!-- Qdrant Settings (shown only when Qdrant backend is selected) -->
@@ -89,46 +85,6 @@ export function getSettingsHtml() {
                                         <strong>Multitenancy OFF:</strong> Separate collections per content type (better isolation)
                                     </small>
                                 </div>
-                            </div>
-
-                            <!-- Milvus Settings (shown only when Milvus backend is selected) -->
-                            <div id="vecthare_milvus_settings" style="display: none;">
-                                <label for="vecthare_milvus_host">
-                                    <small>Milvus Host:</small>
-                                </label>
-                                <input type="text" id="vecthare_milvus_host" class="vecthare-input" placeholder="localhost" />
-
-                                <label for="vecthare_milvus_port">
-                                    <small>Milvus Port:</small>
-                                </label>
-                                <input type="number" id="vecthare_milvus_port" class="vecthare-input" placeholder="19530" />
-
-                                <label for="vecthare_milvus_address">
-                                    <small>Full Address (Optional):</small>
-                                </label>
-                                <input type="text" id="vecthare_milvus_address" class="vecthare-input" placeholder="http://localhost:19530" />
-                                <small class="vecthare_hint">Overrides Host/Port if set (e.g. for cloud instances)</small>
-
-                                <label for="vecthare_milvus_username">
-                                    <small>Username (Optional):</small>
-                                </label>
-                                <input type="text" id="vecthare_milvus_username" class="vecthare-input" />
-
-                                <label for="vecthare_milvus_password">
-                                    <small>Password (Optional):</small>
-                                </label>
-                                <input type="password" id="vecthare_milvus_password" class="vecthare-input" />
-
-                                <label for="vecthare_milvus_token">
-                                    <small>API Token (Optional):</small>
-                                </label>
-                                <input type="password" id="vecthare_milvus_token" class="vecthare-input" placeholder="For cloud instances" />
-
-                                <label for="vecthare_milvus_dimensions">
-                                    <small>Embedding Dimensions:</small>
-                                </label>
-                                <input type="number" id="vecthare_milvus_dimensions" class="vecthare-input" placeholder="Auto (768)" min="1" />
-                                <small class="vecthare_hint">Manually set dimension size if auto-detection fails (e.g. 1536, 4096). Required for some models on first run.</small>
                             </div>
 
                             <label for="vecthare_source">
@@ -437,9 +393,29 @@ export function getSettingsHtml() {
                                         <input id="vecthare_hybrid_native_prefer" type="checkbox" checked />
                                         <span><small>Prefer Native Backend Hybrid</small></span>
                                     </label>
-                                    <small class="vecthare_hint">Use Qdrant/Milvus native hybrid if available (faster)</small>
+                                    <small class="vecthare_hint">Use Qdrant native hybrid if available (faster)</small>
                                 </div>
                             </div>
+
+                            <label class="checkbox_label" for="vecthare_sticky_lore" style="margin-top: 16px;">
+                                <input id="vecthare_sticky_lore" type="checkbox" />
+                                <span><small>Keep Retrieved Lore Stable</small></span>
+                            </label>
+                            <small class="vecthare_hint">Reuses the same lore between refreshes so the model can keep its prompt cache</small>
+
+                            <label class="checkbox_label" for="vecthare_chat_recall_enabled" style="margin-top: 12px;">
+                                <input id="vecthare_chat_recall_enabled" type="checkbox" />
+                                <span><small>Recall Hidden Chat Messages</small></span>
+                            </label>
+                            <small class="vecthare_hint">Indexes this chat and brings back relevant messages hidden by Summaryception</small>
+
+                            <label for="vecthare_lore_max_tokens" style="display: block; margin-top: 12px;"><small>Lore Token Limit</small></label>
+                            <input id="vecthare_lore_max_tokens" class="text_pole" type="number" min="0" step="500" />
+                            <small class="vecthare_hint">Limits extra lore found by meaning. Entries named in the chat or story memory are always kept. 0 turns the limit off.</small>
+
+                            <label for="vecthare_summary_context_chars" style="display: block; margin-top: 12px;"><small>Summaryception Memory Used for Search (characters)</small></label>
+                            <input id="vecthare_summary_context_chars" class="text_pole" type="number" min="0" step="100" />
+                            <small class="vecthare_hint">Lets the newest story memory guide lore search and keywords. 0 turns it off.</small>
 
                             <!-- Custom Stopwords -->
                             <div style="margin-top: 16px; padding: 12px; background: rgba(100,100,100,0.1); border-radius: 8px;">
@@ -456,7 +432,7 @@ export function getSettingsHtml() {
                                 <small>Query Depth: <span id="vecthare_query_depth_value">2</span> messages</small>
                             </label>
                             <input type="range" id="vecthare_query_depth" class="vecthare-slider" min="1" max="20" step="1" />
-                            <small class="vecthare_hint">How many recent messages to include in search query</small>
+                            <small class="vecthare_hint">Recent messages checked by activation triggers and conditions</small>
 
                             <label for="vecthare_deduplication_depth" style="margin-top: 12px;">
                                 <small>Dedup Depth: <span id="vecthare_deduplication_depth_value">50</span> messages</small>

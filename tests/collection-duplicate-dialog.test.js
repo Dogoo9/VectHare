@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('../core/collection-duplicate.js', () => ({
-    DUPLICATION_BACKENDS: { standard: 'Standard (Vectra)', lancedb: 'LanceDB', qdrant: 'Qdrant' },
+    DUPLICATION_BACKENDS: { standard: 'Standard (Vectra)', qdrant: 'Qdrant' },
     duplicateCollection: vi.fn(),
 }));
 import { duplicateCollection } from '../core/collection-duplicate.js';
@@ -24,7 +24,7 @@ afterEach(() => { document.body.innerHTML = ''; });
 it('defaults to source storage, offers supported destinations, and safely displays names', () => {
     openCollectionDuplicateDialog({ ...collection, name: '<img src=x onerror=alert(1)>' }, {});
     expect(el('backend').value).toBe('qdrant');
-    expect([...el('backend').options].filter(o => !o.disabled).map(o => o.value)).toEqual(['standard', 'lancedb', 'qdrant']);
+    expect([...el('backend').options].filter(o => !o.disabled).map(o => o.value)).toEqual(['standard', 'qdrant']);
     expect(document.querySelector('img')).toBeNull();
     expect(el('name').checkValidity()).toBe(true);
     el('close').click();
@@ -36,10 +36,10 @@ it('copies to the chosen backend with the saved source locator and closes withou
     duplicateCollection.mockResolvedValue(result);
     const changed = vi.fn();
     openCollectionDuplicateDialog(collection, { vector_backend: 'standard', source: 'openai' }, changed);
-    el('backend').value = 'lancedb'; el('name').value = 'new_copy'; submit();
+    el('backend').value = 'standard'; el('name').value = 'new_copy'; submit();
     await vi.waitFor(() => expect(changed).toHaveBeenCalledWith(result));
-    expect(duplicateCollection).toHaveBeenCalledWith(collection.registryKey, 'new_copy', expect.objectContaining({ collection_locator: locator }), expect.objectContaining({ targetBackend: 'lancedb' }));
-    expect(el('status').textContent).toContain('LanceDB with 15 chunks');
+    expect(duplicateCollection).toHaveBeenCalledWith(collection.registryKey, 'new_copy', expect.objectContaining({ collection_locator: locator }), expect.objectContaining({ targetBackend: 'standard' }));
+    expect(el('status').textContent).toContain('Standard (Vectra) with 15 chunks');
     expect(el('copy').disabled).toBe(true);
     submit();
     expect(duplicateCollection).toHaveBeenCalledTimes(1);

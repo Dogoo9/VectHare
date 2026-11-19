@@ -116,7 +116,6 @@ export async function migrateEmbeddingCollection({ key, locator, settings, candi
     if (!confirmed) throw new Error('Explicit rebuild confirmation is required.');
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(targetId || '') || targetId === locator.collectionId) throw new Error('Choose a distinct target ID containing letters, numbers, underscores or hyphens.');
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 512) throw new Error('Invalid migration batch size.');
-    if (locator.backend === 'milvus') throw new Error('The current Milvus adapter uses a shared vecthare_main index. A distinct physical migration target requires an upstream backend change.');
     const profile = safeEmbeddingProfile(candidate);
     const comparison = compareEmbeddingFingerprints(profile.fingerprint, profile.fingerprint);
     if (comparison.status !== 'compatible') throw new Error('A rebuild requires a complete target embedding fingerprint.');

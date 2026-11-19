@@ -91,7 +91,7 @@ export async function vectorizeContent({ contentType, source, settings }) {
         progressTracker.updateProgress(4, 'Processing chunks...');
 
         // Ensure backend is initialized and healthy before attempting inserts.
-        // Some backends (LanceDB/Qdrant) require initialization which may fail
+        // Some backends (Qdrant) require initialization which may fail
         // if attempted lazily during insert; pre-initializing reduces first-run failures.
         try {
             await getBackend(vecthareSettings);

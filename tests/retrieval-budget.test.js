@@ -69,3 +69,14 @@ describe('retrieval budgets', () => {
         expect(selectFinalChunks(candidates, 2).map(c => c.id)).toEqual(['edited', 'other']);
     });
 });
+
+describe('cross-collection duplicates', () => {
+    it('spends one slot on identical text held by two collections', () => {
+        const candidates = [
+            { id: 'first', hash: 1, text: 'Same  entry', collectionId: 'a', score: .9 },
+            { id: 'copy', hash: 1, text: 'Same entry', collectionId: 'b', score: .8 },
+            { id: 'other', hash: 2, text: 'Other', collectionId: 'b', score: .7 },
+        ];
+        expect(selectFinalChunks(candidates, 2).map(c => c.id)).toEqual(['first', 'other']);
+    });
+});

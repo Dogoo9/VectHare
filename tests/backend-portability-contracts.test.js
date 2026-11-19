@@ -1,13 +1,11 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { StandardBackend } from '../backends/standard.js';
-import { LanceDBBackend } from '../backends/lancedb.js';
 import { QdrantBackend } from '../backends/qdrant.js';
-import { MilvusBackend } from '../backends/milvus.js';
 const settings = { source: 'koboldcpp', collection_locator: { source: 'koboldcpp', model: 'physical-nomic' } };
 let fetchMock;
 beforeEach(() => { fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, results: [], items: [], total: 0 }) })); vi.stubGlobal('fetch', fetchMock); });
 afterEach(() => vi.unstubAllGlobals());
-it.each([StandardBackend, LanceDBBackend, QdrantBackend, MilvusBackend])('%s carries physical model and client query vectors to supported plugin APIs', async Backend => {
+it.each([StandardBackend, QdrantBackend])('%s carries physical model and client query vectors to supported plugin APIs', async Backend => {
     const backend = new Backend(); backend.pluginAvailable = true;
     await backend.queryCollection('old', 'private', 5, settings, [1, 0]);
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
@@ -33,4 +31,17 @@ it('precomputed Qdrant documents preserve original text instead of adding keywor
 it('Qdrant insertion forwards the selected llama.cpp URL instead of falling back to plugin localhost:8080', async () => {
     await new QdrantBackend().insertVectorItems('new', [{ hash: 7, text: 'synthetic' }], { source: 'llamacpp', inference_request_args: { apiUrl: 'http://127.0.0.1:8099' } });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ source: 'llamacpp', apiUrl: 'http://127.0.0.1:8099' });
+});
+
+it('sends task prefixes and extracted keywords only on the matching plugin requests', async () => {
+    const backend = new QdrantBackend();
+    const prefixed = { ...settings, inference_request_args: {}, embedding_query_prefix: 'Q: ', embedding_document_prefix: 'D: ' };
+    await backend.queryCollection('c', 'text', 5, prefixed);
+    await backend.hybridQuery('c', 'text', 5, prefixed, { keywords: ['alice'], textWeight: 0.3 });
+    await backend.insertVectorItems('c', [{ hash: 1, text: 'doc' }], prefixed);
+    await backend.updateChunkText('c', 1, 'new', prefixed);
+    await backend.deleteVectorItems('c', [1], prefixed);
+    const bodies = fetchMock.mock.calls.map(call => JSON.parse(call[1].body));
+    expect(bodies.map(body => body.embeddingPrefix)).toEqual(['Q: ', 'Q: ', 'D: ', 'D: ', undefined]);
+    expect(bodies[1]).toMatchObject({ keywords: ['alice'], hybridOptions: { textWeight: 0.3 } });
 });

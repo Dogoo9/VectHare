@@ -734,11 +734,10 @@ function renderCollectionCard(collection) {
 
   // Activation badge (shows triggers or conditions)
   const activationSummary = getCollectionActivationSummary(collection.id);
-  // Backend badge - shows vector database (Standard, LanceDB, Qdrant)
+  // Backend badge - shows vector database (Standard, Qdrant)
   const backendDisplayName =
     {
       standard: "Standard",
-      lancedb: "LanceDB",
       qdrant: "Qdrant",
     }[collection.backend] || collection.backend;
 

@@ -6,6 +6,7 @@ const { queryMultipleCollections } = vi.hoisted(() => ({ queryMultipleCollection
 
 vi.mock('../core/../../../../../script.js', () => ({
     getCurrentChatId: vi.fn(() => 'chat-1'), is_send_press: false, setExtensionPrompt: vi.fn(),
+    extension_prompt_types: { IN_PROMPT: 0, IN_CHAT: 1 },
     substituteParams: value => value, chat_metadata: {}, extension_prompts: {},
     getRequestHeaders: vi.fn(() => ({})),
     saveSettingsDebounced: vi.fn(),

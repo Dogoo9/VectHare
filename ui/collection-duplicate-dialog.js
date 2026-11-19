@@ -17,7 +17,7 @@ export function openCollectionDuplicateDialog(collection, settings, onChanged = 
         <label>Destination storage<select class="text_pole" data-backend></select></label>
         <label>New collection name<input class="text_pole" data-name required maxlength="160" pattern="[a-zA-Z0-9_\\-]{1,160}" autocomplete="off"></label>
         <p class="vecthare-duplicate-hint">Use letters, numbers, underscores or hyphens. The copy keeps the stored embeddings and starts paused, with independent chunk settings. No re-embedding is needed.</p>
-        <p class="vecthare-duplicate-hint">Similharity is required. Configure the destination connection in VectHare settings first. Milvus destinations are unavailable because its adapter uses shared storage.</p>
+        <p class="vecthare-duplicate-hint">Similharity is required. Configure the destination connection in VectHare settings first.</p>
         <p data-status role="status" aria-live="polite"></p>
         <div class="vecthare-duplicate-actions">
             <button type="button" class="menu_button" data-close>Cancel</button>
@@ -28,9 +28,6 @@ export function openCollectionDuplicateDialog(collection, settings, onChanged = 
     for (const [value, label] of Object.entries(DUPLICATION_BACKENDS)) {
         el('backend').add(new Option(label, value));
     }
-    const milvus = new Option('Milvus — shared storage (unavailable)', 'milvus');
-    milvus.disabled = true;
-    el('backend').add(milvus);
     const sourceBackend = locator.backend === 'vectra' ? 'standard' : locator.backend;
     el('backend').value = Object.hasOwn(DUPLICATION_BACKENDS, sourceBackend) ? sourceBackend : 'qdrant';
     el('source').textContent = `Copy “${collection.name || collection.id}” from ${DUPLICATION_BACKENDS[sourceBackend] || sourceBackend}.`;

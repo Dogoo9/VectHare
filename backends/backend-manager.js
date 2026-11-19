@@ -12,18 +12,18 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { StandardBackend } from './standard.js';
-import { LanceDBBackend } from './lancedb.js';
 import { QdrantBackend } from './qdrant.js';
-import { MilvusBackend } from './milvus.js';
 import { logger } from '../utils/logger.js';
 
 // Backend registry - add new backends here
 const BACKENDS = {
     standard: StandardBackend,
-    lancedb: LanceDBBackend,
     qdrant: QdrantBackend,
-    milvus: MilvusBackend,
 };
+
+// Saved settings and collection keys may still name these.
+export const REMOVED_BACKENDS = ['lancedb', 'milvus'];
+const warnedRemovedBackends = new Set();
 
 // Backend name aliases (server uses 'vectra', we use 'standard')
 const BACKEND_ALIASES = {
@@ -37,6 +37,13 @@ const BACKEND_ALIASES = {
  */
 function normalizeBackendName(backendName) {
     if (!backendName) return 'standard';
+    if (REMOVED_BACKENDS.includes(backendName)) {
+        if (!warnedRemovedBackends.has(backendName)) {
+            warnedRemovedBackends.add(backendName);
+            console.warn(`VectHare: The ${backendName} backend was removed; using standard storage.`);
+        }
+        return 'standard';
+    }
     const normalized = BACKEND_ALIASES[backendName] || backendName;
     return normalized;
 }
@@ -263,7 +270,7 @@ function evictLRUBackendIfNeeded() {
 
 /**
  * Initialize a specific backend (caches instances for reuse)
- * @param {string} backendName - 'standard', 'lancedb', or 'qdrant'
+ * @param {string} backendName - 'standard' or 'qdrant'
  * @param {object} settings - VectHare settings
  * @param {boolean} throwOnFail - Whether to throw on health check failure (default: true)
  * @returns {Promise<VectorBackend|null>} The backend instance or null if failed and throwOnFail=false

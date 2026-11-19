@@ -105,7 +105,7 @@ it('missing llama.cpp URL fails before any insert or query', async () => {
     expect(mocks.backend.insertVectorItems).not.toHaveBeenCalled();
 });
 
-it.each(['qdrant', 'lancedb', 'milvus'])('preserves the %s server default without a browser llama.cpp connection', async vector_backend => {
+it.each(['qdrant'])('preserves the %s server default without a browser llama.cpp connection', async vector_backend => {
     const settings = { source: 'llamacpp', vector_backend };
     await insertVectorItems('new', [{ hash: 8, text: 'synthetic' }], settings);
     await queryCollection('new', 'synthetic', 5, settings);

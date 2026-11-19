@@ -119,7 +119,7 @@ export class VectorBackend {
 
     /**
      * Check if backend supports native hybrid search (dense + sparse/full-text)
-     * Override in backends that support native hybrid search (e.g., Qdrant, Milvus)
+     * Override in backends that support native hybrid search (e.g., Qdrant)
      * @returns {boolean}
      */
     supportsHybridSearch() {

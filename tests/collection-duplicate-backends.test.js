@@ -7,7 +7,7 @@ import { resetBackendHealth } from '../backends/backend-manager.js';
 import { duplicateCollection } from '../core/collection-duplicate.js';
 import { setCollectionMeta, getCollectionMeta, saveChunkMetadata, getChunkMetadata } from '../core/collection-metadata.js';
 
-const backends = ['standard', 'lancedb', 'qdrant'];
+const backends = ['standard', 'qdrant'];
 const original = Array.from({ length: 503 }, (_, index) => ({ hash: index, index, text: `Chunk ${index}`,
     vector: [1, index / 1000], metadata: { parentHash: 0, keywords: ['memory'], nested: { stable: true } } }));
 let storage, requests, pluginAvailable, corrupt;
@@ -71,8 +71,8 @@ it.each(backends.flatMap(from => backends.map(to => [from, to])))('copies %s →
 });
 
 it('defaults to the source backend, and normalizes Vectra destination aliases', async () => {
-    const key = source('lancedb');
-    expect((await duplicateCollection(key, 'copy', {})).registryKey).toBe('lancedb:koboldcpp:copy');
+    const key = source('qdrant');
+    expect((await duplicateCollection(key, 'copy', {})).registryKey).toBe('qdrant:koboldcpp:copy');
     expect((await duplicateCollection(key, 'vectra_copy', {}, { targetBackend: 'vectra' })).registryKey).toBe('standard:koboldcpp:vectra_copy');
 });
 
@@ -91,18 +91,18 @@ it.each(backends)('rejects an occupied %s destination before writing', async bac
     expect(requests.some(r => r.url.endsWith('/chunks/insert'))).toBe(false);
 });
 
-it('rejects shared Milvus destinations and Standard without vector-capable storage', async () => {
+it('rejects removed destinations and Standard without vector-capable storage', async () => {
     const key = source('qdrant');
-    await expect(duplicateCollection(key, 'copy', {}, { targetBackend: 'milvus' })).rejects.toThrow('shared storage');
+    await expect(duplicateCollection(key, 'copy', {}, { targetBackend: 'milvus' })).rejects.toThrow('Unsupported destination');
     pluginAvailable = false;
     await expect(duplicateCollection(key, 'copy', {}, { targetBackend: 'standard' })).rejects.toThrow('Similharity is required');
     expect(requests.some(r => r.url.endsWith('/chunks/insert'))).toBe(false);
     expect(storage.get('qdrant:old')).toEqual(original);
 });
 
-it('keeps a failed LanceDB copy paused without changing the source', async () => {
+it('keeps a failed copy paused without changing the source', async () => {
     const key = source('standard'); corrupt = true;
-    await expect(duplicateCollection(key, 'copy', {}, { targetBackend: 'lancedb' })).rejects.toThrow('vectors differ');
-    expect(getCollectionMeta('lancedb:koboldcpp:copy')).toMatchObject({ enabled: false, importState: { status: 'failed' } });
+    await expect(duplicateCollection(key, 'copy', {}, { targetBackend: 'qdrant' })).rejects.toThrow('vectors differ');
+    expect(getCollectionMeta('qdrant:koboldcpp:copy')).toMatchObject({ enabled: false, importState: { status: 'failed' } });
     expect(storage.get('standard:old')).toEqual(original);
 });

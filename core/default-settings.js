@@ -8,19 +8,13 @@ import { getDefaultDecaySettings } from './temporal-decay.js';
 export const defaultSettings = {
     // Core vector settings
     source: 'transformers',
-    vector_backend: 'standard', // Backend: 'standard' (ST Vectra), 'lancedb', 'qdrant'
+    vector_backend: 'standard', // Backend: 'standard' (ST Vectra), 'qdrant'
     qdrant_host: 'localhost',
     qdrant_port: 6333,
     qdrant_url: '',
     qdrant_api_key: '',
     qdrant_use_cloud: false,
     qdrant_multitenancy: false, // Use single collection with content_type field instead of separate collections
-    milvus_host: 'localhost',
-    milvus_port: 19530,
-    milvus_username: '',
-    milvus_password: '',
-    milvus_token: '',
-    milvus_address: '',
     alt_endpoint_url: '',
     use_alt_endpoint: false,
     saved_endpoints: [],
@@ -81,7 +75,28 @@ export const defaultSettings = {
     hybrid_vector_weight: 0.5,          // Weight for vector scores (0-1) - used in weighted mode
     hybrid_text_weight: 0.5,            // Weight for text/BM25 scores (0-1) - used in weighted mode
     hybrid_rrf_k: 60,                   // RRF constant (higher = more weight to top results)
-    hybrid_native_prefer: true,         // Prefer native backend hybrid if available (Qdrant/Milvus)
+    hybrid_native_prefer: true,         // Prefer native backend hybrid if available (Qdrant)
+
+    // Retrieval query
+    query_tail_chars: 600,              // End of the latest reply searched alongside the user's message
+    keyword_scan_messages: 20,          // Visible messages scanned for exact entry keywords
+    summary_context_chars: 1500,        // Newest Summaryception memory used for search and keywords; 0 turns it off
+    lore_max_tokens: 8000,              // Estimated limit for lore; entries named in chat or memory are always kept. 0 turns it off
+
+    // Embedding task prefixes (server-side embedding; changing them requires re-embedding)
+    embedding_query_prefix: '',
+    embedding_document_prefix: '',
+
+    // Sticky lore keeps retrieved lore byte-identical so the prompt cache survives
+    sticky_lore: true,
+    sticky_max_age_turns: 8,            // User turns before lore is selected again
+    sticky_delta_k: 4,                  // New lore added near the end between refreshes
+    sticky_delta_max_tokens: 1200,      // Estimated limit for that added lore
+
+    // Recall of original chat messages hidden by Summaryception
+    chat_recall_enabled: false,
+    chat_recall_k: 3,
+    chat_recall_max_chars: 8000,
 
     // Advanced features
     temporal_decay: getDefaultDecaySettings(),

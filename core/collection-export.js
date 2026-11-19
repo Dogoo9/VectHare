@@ -390,7 +390,7 @@ async function insertChunksWithVectors(collectionId, chunks, settings) {
 /** Reserve a fresh destination without probing or purging a live index. */
 async function reserveImportTarget(collectionId, settings, options) {
     if (options.overwrite) throw new Error('Import cannot overwrite an existing collection. Import to a new ID and review it before enabling.');
-    if (settings.vector_backend === 'milvus' || (settings.vector_backend === 'qdrant' && settings.qdrant_multitenancy)) throw new Error('Safe import requires a separate physical index; shared Milvus/Qdrant multitenancy imports are not supported.');
+    if (settings.vector_backend === 'qdrant' && settings.qdrant_multitenancy) throw new Error('Safe import requires a separate physical index; shared Milvus/Qdrant multitenancy imports are not supported.');
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(collectionId)) throw new Error('Use a new import ID containing letters, numbers, underscores or hyphens.');
     if (Object.keys(extension_settings.vecthare?.collections || {}).some(k => parseRegistryKey(k).collectionId === collectionId) || getCollectionRegistry().some(k => parseRegistryKey(k).collectionId === collectionId)) {
         throw new Error('Import target already exists. Choose a new ID; the original was not modified.');

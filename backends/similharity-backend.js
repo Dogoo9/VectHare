@@ -3,7 +3,7 @@
  * SIMILHARITY PLUGIN BACKEND BASE
  * ============================================================================
  * Shared implementation for backends that talk to the Similharity server
- * plugin's unified /chunks/* API (LanceDB, Milvus, Qdrant). Subclasses only
+ * plugin's unified /chunks/* API (Qdrant). Subclasses only
  * describe what differs: initialization, how a collection is addressed
  * (`_target`), and optional insert/hybrid tweaks.
  * ============================================================================
@@ -120,10 +120,11 @@ export class SimilharityBackend extends VectorBackend {
     // ------------------------------------------------------------------------
 
     /** Common request body: backend, optional inference args, target, extras, source and model. */
-    _body(collectionId, settings, op, extra = {}, { inference = false } = {}) {
+    _body(collectionId, settings, op, extra = {}, { inference = false, embeddingPrefix = '' } = {}) {
         return {
             backend: this.type,
             ...(inference ? settings.inference_request_args : {}),
+            ...(inference && embeddingPrefix ? { embeddingPrefix } : {}),
             ...this._target(collectionId, settings, op),
             ...extra,
             source: settings.source || 'transformers',
@@ -176,7 +177,7 @@ export class SimilharityBackend extends VectorBackend {
             const response = await pluginRequest('/chunks/insert', {
                 body: this._body(collectionId, settings, 'insert', {
                     items: batch.map(item => this._mapItem(item, settings, collectionId)),
-                }, { inference: true }),
+                }, { inference: true, embeddingPrefix: settings.embedding_document_prefix }),
             });
             if (!response.ok) {
                 const errorBody = await response.text().catch(() => 'No response body');
@@ -207,7 +208,7 @@ export class SimilharityBackend extends VectorBackend {
                 topK,
                 threshold,
                 ...(queryVector ? { queryVector } : {}),
-            }, { inference: true }),
+            }, { inference: true, embeddingPrefix: settings.embedding_query_prefix }),
         });
         await this._throwIfFailed(response, `query collection ${collectionId}`);
         const data = await response.json();
@@ -267,7 +268,7 @@ export class SimilharityBackend extends VectorBackend {
     async updateChunkText(collectionId, hash, newText, settings) {
         const response = await pluginRequest(`/chunks/${encodeURIComponent(hash)}/text`, {
             method: 'PATCH',
-            body: this._body(collectionId, settings, 'updateText', { text: newText }, { inference: true }),
+            body: this._body(collectionId, settings, 'updateText', { text: newText }, { inference: true, embeddingPrefix: settings.embedding_document_prefix }),
         });
         await this._throwIfFailed(response, `update chunk text in ${collectionId} (hash: ${hash})`);
         return response.json();
@@ -295,7 +296,7 @@ export class SimilharityBackend extends VectorBackend {
      */
     async hybridQuery(collectionId, searchText, topK, settings, hybridOptions = {}) {
         if (!this.supportsHybridSearch()) return super.hybridQuery(collectionId, searchText, topK, settings, hybridOptions);
-        const { vectorWeight = 0.5, textWeight = 0.5, fusionMethod = 'rrf', rrfK = 60 } = hybridOptions;
+        const { vectorWeight = 0.5, textWeight = 0.5, fusionMethod = 'rrf', rrfK = 60, keywords } = hybridOptions;
         try {
             const response = await pluginRequest('/chunks/hybrid-query', {
                 body: this._body(collectionId, settings, 'hybrid', {
@@ -303,8 +304,9 @@ export class SimilharityBackend extends VectorBackend {
                     topK,
                     threshold: 0.0,
                     hybrid: true,
+                    ...(keywords ? { keywords } : {}),
                     hybridOptions: { vectorWeight, textWeight, fusionMethod, rrfK },
-                }, { inference: true }),
+                }, { inference: true, embeddingPrefix: settings.embedding_query_prefix }),
             });
             if (response.ok) {
                 const data = await response.json();

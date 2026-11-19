@@ -714,7 +714,7 @@ export async function testTemporallyBlindChunks(settings) {
 
 /**
  * Test: Does the plugin backend correctly generate embeddings during insert?
- * This specifically tests the Similharity plugin's LanceDB/Qdrant handlers.
+ * This specifically tests the Similharity plugin's Qdrant handler.
  * These handlers MUST generate embeddings - they cannot rely on pre-provided vectors.
  * Creates a temporary test collection that is cleaned up after the test.
  */

@@ -85,7 +85,7 @@ it('leaves a copy disabled if its final count cannot be verified', async () => {
     expect(getCollectionMeta('standard:transformers:copy').enabled).toBe(false);
 });
 
-it.each([{ vector_backend: 'milvus' }, { vector_backend: 'qdrant', qdrant_multitenancy: true }])('rejects a shared physical import index before writes', async settings => {
+it.each([{ vector_backend: 'qdrant', qdrant_multitenancy: true }])('rejects a shared physical import index before writes', async settings => {
     await expect(importCollection(backup(), settings, { collectionId: 'copy' })).rejects.toThrow('separate physical index');
     expect(mocks.purge).not.toHaveBeenCalled(); expect(mocks.insert).not.toHaveBeenCalled();
 });

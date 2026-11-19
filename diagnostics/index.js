@@ -15,7 +15,6 @@ import {
     checkBackendEndpoints,
     checkServerPlugin,
     checkPluginEndpoints,
-    checkLanceDBBackend,
     checkQdrantBackend,
     checkQdrantDimensionMatch,
     checkEmbeddingProvider,
@@ -135,7 +134,6 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
     categories.infrastructure.push(await checkBackendEndpoints(settings));
     categories.infrastructure.push(await checkServerPlugin());
     categories.infrastructure.push(await checkPluginEndpoints());
-    categories.infrastructure.push(await checkLanceDBBackend(settings));
     categories.infrastructure.push(await checkQdrantBackend(settings));
     categories.infrastructure.push(await checkQdrantDimensionMatch(settings));
     categories.infrastructure.push(await checkEmbeddingProvider(settings));
@@ -225,7 +223,7 @@ export async function runDiagnostics(settings, includeProductionTests = false) {
         categories.production.push(await testTemporallyBlindChunks(settings));
         categories.production.push(await testChunkServerSync(settings));
         categories.production.push(await testDuplicateHashes(settings));
-        // Plugin-specific embedding generation test (LanceDB/Qdrant)
+        // Plugin-specific embedding generation test (Qdrant)
         categories.production.push(await testPluginEmbeddingGeneration(settings));
         
         // Hybrid search tests

@@ -14,7 +14,6 @@ const pendingNames = new Set();
 const normalizeBackend = backend => backend === 'vectra' ? 'standard' : backend;
 export const DUPLICATION_BACKENDS = Object.freeze({
     standard: 'Standard (Vectra)',
-    lancedb: 'LanceDB',
     qdrant: 'Qdrant',
 });
 
@@ -38,9 +37,7 @@ export async function duplicateCollection(key, name, settings, { targetBackend, 
     const sourceLocator = sourceSettings.collection_locator || { backend: settings.vector_backend || 'standard', source: settings.source || 'transformers', model: settings.model || '', collectionId: sourceId };
     targetBackend = normalizeBackend(targetBackend || sourceLocator.backend);
     if (!Object.hasOwn(DUPLICATION_BACKENDS, targetBackend)) {
-        throw new Error(targetBackend === 'milvus'
-            ? 'Milvus uses shared storage and cannot create an independent duplicate. Choose Standard, LanceDB or Qdrant.'
-            : 'Unsupported destination backend. Choose Standard, LanceDB or Qdrant.');
+        throw new Error('Unsupported destination backend. Choose Standard or Qdrant.');
     }
     if (settings.qdrant_multitenancy && (sourceLocator.backend === 'qdrant' || targetBackend === 'qdrant')) {
         throw new Error('Turn off Qdrant multitenancy in settings to duplicate a separately named collection.');
