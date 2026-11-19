@@ -5,7 +5,7 @@ import { info, init } from '../index.js';
 
 test('health endpoint exposes the discovery-compatible plugin contract', async () => {
     const routes = new Map();
-    const router = {};
+    const router = { use() {} };
     for (const method of ['get', 'post', 'patch', 'delete', 'put']) {
         router[method] = (route, handler) => routes.set(`${method.toUpperCase()} ${route}`, handler);
     }

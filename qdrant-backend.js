@@ -355,23 +355,18 @@ export class QdrantBackend {
         }
 
         // Check if collection exists and validate dimension matches
+        let existingDimension;
         try {
             const collections = await this._request('GET', '/collections');
-            const exists = collections.result?.collections?.some(c => c.name === mainCollection);
-
-            if (exists) {
+            if (collections.result?.collections?.some(c => c.name === mainCollection)) {
                 const collectionInfo = await this._request('GET', `/collections/${mainCollection}`);
-                const existingDimension = collectionInfo.result?.config?.params?.vectors?.size;
-
-                if (existingDimension && existingDimension !== expectedDimension) {
-                    console.warn(`[Qdrant] Vector dimension mismatch. Collection has ${existingDimension} dimensions, but insert requires ${expectedDimension}. Dropping collection to recreate...`);
-                    await this.purgeAll();
-                    // Wait slightly for deletion to propagate (optional but safe)
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
+                existingDimension = collectionInfo.result?.config?.params?.vectors?.size;
             }
         } catch (error) {
              console.debug('[Qdrant] Could not check existing collection dimension:', error.message);
+        }
+        if (existingDimension && existingDimension !== expectedDimension) {
+            throw new Error(`[Qdrant] Vector dimension mismatch in ${mainCollection}: expected dim: ${existingDimension}, got ${expectedDimension}`);
         }
 
         // Ensure collection exists (use first vector's size)
@@ -562,7 +557,7 @@ export class QdrantBackend {
      * @param {number} topK - Number of results to return
      * @param {object} options - Query options
      *   - vectorWeight: Weight for vector similarity (0-1, default: 0.5)
-     *   - keywordWeight: Weight for keyword matching (0-1, default: 0.5)
+     *   - keywordWeight (or textWeight): Weight for keyword matching (0-1, default: 0.5)
      *   - fusionMethod: 'rrf' or 'weighted' (default: 'rrf')
      *   - rrfK: RRF constant (default: 60)
      *   - keywordBoost: Multiplier for keyword matches (default: 1.5)
@@ -579,7 +574,7 @@ export class QdrantBackend {
 
         // Default options
         const vectorWeight = options.vectorWeight ?? 0.5;
-        const keywordWeight = options.keywordWeight ?? 0.5;
+        const keywordWeight = options.keywordWeight ?? options.textWeight ?? 0.5;
         const fusionMethod = options.fusionMethod || 'rrf';
         const rrfK = options.rrfK || 60;
         const keywordBoost = options.keywordBoost || 1.5;

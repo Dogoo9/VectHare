@@ -2,7 +2,7 @@
  * Similharity Server Plugin
  *
  * Unified vector database backend for VectHare extension.
- * Supports multiple backends: Vectra (file-based), LanceDB, Qdrant
+ * Supports two backends: Vectra (file-based) and Qdrant
  *
  * All chunk operations go through unified /chunks/* endpoints.
  * Backend is specified via `backend` parameter in request body.
@@ -12,38 +12,27 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import sanitize from 'sanitize-filename';
 import vectra from 'vectra';
 import qdrantBackend from './qdrant-backend.js';
 
-let lancedbBackend;
-let milvusBackend;
-
-async function loadLanceDBBackend() {
-    if (!lancedbBackend) {
-        try {
-            ({ default: lancedbBackend } = await import('./lancedb-backend.js'));
-        } catch (error) {
-            throw new Error(`LanceDB backend is unavailable. Run npm install in the Similharity plugin directory. ${error.message}`, { cause: error });
-        }
-    }
-    return lancedbBackend;
-}
-
-async function loadMilvusBackend() {
-    if (!milvusBackend) {
-        try {
-            ({ default: milvusBackend } = await import('./milvus-backend.js'));
-        } catch (error) {
-            throw new Error(`Milvus backend is unavailable. Run npm install in the Similharity plugin directory. ${error.message}`, { cause: error });
-        }
-    }
-    return milvusBackend;
-}
-
 const pluginName = 'similharity';
 const pluginVersion = '3.2.1';
+const SUPPORTED_BACKENDS = new Set(['vectra', 'standard', 'qdrant']);
+const KEYWORD_STOPWORDS = new Set([
+    'about', 'after', 'again', 'all', 'also', 'and', 'any', 'are', 'because', 'been', 'before', 'being', 'but', 'can',
+    'could', 'did', 'does', 'for', 'from', 'had', 'has', 'have', 'her', 'here', 'him', 'his', 'how', 'into', 'its',
+    'just', 'like', 'more', 'most', 'not', 'now', 'off', 'one', 'only', 'other', 'our', 'out', 'over', 'she', 'should',
+    'some', 'still', 'than', 'that', 'the', 'their', 'them', 'then', 'there', 'these', 'they', 'this', 'those', 'through',
+    'too', 'very', 'was', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'why', 'will', 'with', 'would',
+    'you', 'your',
+]);
+
+function extractSearchKeywords(text) {
+    const words = String(text).toLowerCase().match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || [];
+    return [...new Set(words.filter(word => word.length > 2 && !KEYWORD_STOPWORDS.has(word)))].slice(0, 10);
+}
 
 /**
  * Initialize the plugin
@@ -52,25 +41,19 @@ const pluginVersion = '3.2.1';
 export async function init(router) {
     console.log(`[${pluginName}] Initializing v${pluginVersion}...`);
 
+    router.use((req, res, next) => {
+        const backend = req.body?.backend ?? req.query?.backend;
+        if (backend !== undefined && !SUPPORTED_BACKENDS.has(backend)) {
+            return res.status(400).json({ error: `Unsupported backend: ${backend}. Use vectra or qdrant.` });
+        }
+        next();
+    });
+
     // ========================================================================
     // BACKEND HANDLER - Routes requests to appropriate backend
     // ========================================================================
 
-    /**
-     * Ensures LanceDB is initialized before use
-     * @param {object} directories - User directories containing vectors path
-     */
-    async function ensureLanceDBInitialized(directories) {
-        await loadLanceDBBackend();
-        if (!lancedbBackend.basePath) {
-            console.log(`[${pluginName}] Auto-initializing LanceDB backend...`);
-            await lancedbBackend.initialize(directories.vectors);
-        }
-    }
-
     async function getBackendHandler(backend) {
-        if (backend === 'lancedb') await loadLanceDBBackend();
-        if (backend === 'milvus') await loadMilvusBackend();
         switch (backend) {
             case 'vectra':
             case 'standard':
@@ -294,88 +277,6 @@ export async function init(router) {
                     }
                 };
 
-            case 'lancedb':
-                return {
-                    type: 'lancedb',
-
-                    list: async (collectionId, source, model, directories, options = {}) => {
-                        const items = await lancedbBackend.listItems(collectionId, source, options);
-                        // Return same format as Vectra handler for consistency
-                        const offset = options.offset || 0;
-                        const limit = options.limit || items.length;
-                        const paginatedItems = items.slice(offset, offset + limit);
-                        return {
-                            items: paginatedItems,
-                            total: items.length,
-                            offset,
-                            limit,
-                            hasMore: offset + limit < items.length
-                        };
-                    },
-
-                    get: async (collectionId, hash, source) => {
-                        return await lancedbBackend.getItem(collectionId, hash, source);
-                    },
-
-                    insert: async (collectionId, items, source, model, directories, req) => {
-                        // Generate embeddings if not provided
-                        let itemsWithVectors = [...items];
-                        const itemsNeedingVectors = itemsWithVectors.filter(i => !i.vector);
-
-                        if (itemsNeedingVectors.length > 0) {
-                            console.log(`[LanceDB] Generating embeddings for ${itemsNeedingVectors.length} items`);
-                            const texts = itemsNeedingVectors.map(i => i.text);
-                            const vectors = await getVectorsForSource(source, texts, model, directories, req);
-
-                            let vIndex = 0;
-                            itemsWithVectors = itemsWithVectors.map(item => {
-                                if (!item.vector) {
-                                    const vector = vectors[vIndex++];
-                                    if (!vector || !Array.isArray(vector) || vector.length === 0) {
-                                        console.error(`[LanceDB] Failed to generate valid vector for item hash=${item.hash}, source=${source}, model=${model}`);
-                                        throw new Error(`Failed to generate embedding for item. Source: ${source}, Model: ${model}`);
-                                    }
-                                    return { ...item, vector };
-                                }
-                                return item;
-                            });
-                        }
-
-                        await lancedbBackend.insertVectors(collectionId, itemsWithVectors, source);
-                    },
-
-                    updateText: async (collectionId, hash, newText, source, model, directories, req) => {
-                        // Get new embedding
-                        const newVector = await getEmbeddingForSource(source, newText, model, directories, req);
-                        const newHash = getStringHash(newText);
-                        await lancedbBackend.updateItem(collectionId, hash, { text: newText, hash: newHash, vector: newVector }, source);
-                        return { oldHash: hash, newHash, text: newText };
-                    },
-
-                    updateMetadata: async (collectionId, hash, metadata, source) => {
-                        await lancedbBackend.updateItemMetadata(collectionId, hash, metadata, source);
-                        return { hash, metadata };
-                    },
-
-                    delete: async (collectionId, hashes, source) => {
-                        await lancedbBackend.deleteVectors(collectionId, hashes, source);
-                        return hashes.length;
-                    },
-
-                    query: async (collectionId, queryVector, topK, threshold, source, model, directories, options = {}) => {
-                        const results = await lancedbBackend.queryVectors(collectionId, queryVector, topK, threshold, source);
-                        return results;
-                    },
-
-                    purge: async (collectionId, source) => {
-                        await lancedbBackend.purgeCollection(collectionId, source);
-                    },
-
-                    stats: async (collectionId, source) => {
-                        return await lancedbBackend.getCollectionStats(collectionId, source);
-                    }
-                };
-
             case 'qdrant':
                 return {
                     type: 'qdrant',
@@ -466,84 +367,6 @@ export async function init(router) {
                     }
                 };
 
-            case 'milvus':
-                return {
-                    type: 'milvus',
-
-                    list: async (collectionId, source, model, directories, options = {}) => {
-                        const items = await milvusBackend.listItems(collectionId, options.filters || {}, options);
-                        const offset = options.offset || 0;
-                        const limit = options.limit || items.length;
-                        return {
-                            items: items,
-                            total: items.length,
-                            offset,
-                            limit,
-                            hasMore: items.length >= limit
-                        };
-                    },
-
-                    get: async (collectionId, hash, source, model, directories, filters = {}) => {
-                        return await milvusBackend.getItem(collectionId, hash, filters);
-                    },
-
-                    insert: async (collectionId, items, source, model, directories, req, filters = {}) => {
-                        // Generate embeddings if not provided
-                        let itemsWithVectors = [...items];
-                        const itemsNeedingVectors = itemsWithVectors.filter(i => !i.vector);
-
-                        if (itemsNeedingVectors.length > 0) {
-                            console.log(`[Milvus] Generating embeddings for ${itemsNeedingVectors.length} items`);
-                            const texts = itemsNeedingVectors.map(i => i.text);
-                            const vectors = await getVectorsForSource(source, texts, model, directories, req);
-
-                            let vIndex = 0;
-                            itemsWithVectors = itemsWithVectors.map(item => {
-                                if (!item.vector) {
-                                    return { ...item, vector: vectors[vIndex++] };
-                                }
-                                return item;
-                            });
-                        }
-
-                        await milvusBackend.insertVectors(collectionId, itemsWithVectors, {
-                            ...filters,
-                            embeddingSource: source,
-                            embeddingModel: model,
-                        });
-                    },
-
-                    updateText: async (collectionId, hash, newText, source, model, directories, req, filters = {}) => {
-                        const newVector = await getEmbeddingForSource(source, newText, model, directories, req);
-                        const newHash = getStringHash(newText);
-                        await milvusBackend.updateItem(collectionId, hash, { text: newText, hash: newHash, vector: newVector }, filters);
-                        return { oldHash: hash, newHash, text: newText };
-                    },
-
-                    updateMetadata: async (collectionId, hash, metadata, source, model, directories, filters = {}) => {
-                        await milvusBackend.updateItem(collectionId, hash, metadata, filters);
-                        return { hash, metadata };
-                    },
-
-                    delete: async (collectionId, hashes, source, model, directories, filters = {}) => {
-                        await milvusBackend.deleteVectors(collectionId, hashes);
-                        return hashes.length;
-                    },
-
-                    query: async (collectionId, queryVector, topK, threshold, source, model, directories, options = {}) => {
-                        const results = await milvusBackend.queryCollection(collectionId, queryVector, topK, options.filters || {});
-                        return results.filter(r => r.score >= threshold);
-                    },
-
-                    purge: async (collectionId, source, model, directories, filters = {}) => {
-                        await milvusBackend.purgeCollection(collectionId, filters);
-                    },
-
-                    stats: async (collectionId, source, model, directories, filters = {}) => {
-                        return await milvusBackend.getCollectionStats(collectionId, filters);
-                    }
-                };
-
             default:
                 throw new Error(`Unknown backend: ${backend}`);
         }
@@ -565,8 +388,8 @@ export async function init(router) {
             plugin: pluginName,
             id: pluginName,
             version: pluginVersion,
-            backends: ['vectra', 'lancedb', 'qdrant', 'milvus'],
-            features: ['filesystem-discovery', 'collection-browser', 'vectra-full-metadata', 'lancedb', 'qdrant', 'milvus']
+            backends: ['vectra', 'qdrant'],
+            features: ['filesystem-discovery', 'collection-browser', 'vectra-full-metadata', 'qdrant']
         });
     });
 
@@ -582,34 +405,35 @@ export async function init(router) {
                 return res.status(400).json({ error: 'collectionId and backend are required' });
             }
 
-            const vectorsPath = req.user.directories.vectors;
-            let folderPath;
-
-            if (backend === 'lancedb') {
-                // LanceDB structure: lancedb/{source}/{collectionId}.lance
-                const effectiveSource = source || 'bananabread';
-                folderPath = path.join(vectorsPath, 'lancedb', effectiveSource, `${collectionId}.lance`);
-            } else if (backend === 'qdrant') {
+            if (backend === 'qdrant') {
                 return res.status(400).json({ error: 'Qdrant collections are stored remotely' });
-            } else {
-                const effectiveSource = source || 'transformers';
-                folderPath = path.join(vectorsPath, effectiveSource, collectionId);
             }
 
-            folderPath = path.resolve(folderPath);
+            const safeSource = sanitize(String(source || 'transformers'));
+            const safeCollectionId = sanitize(String(collectionId));
+            if (!safeSource || !safeCollectionId) {
+                return res.status(400).json({ error: 'Invalid source or collectionId' });
+            }
 
+            let vectorsPath;
+            let folderPath;
             try {
-                await fs.access(folderPath);
+                vectorsPath = await fs.realpath(req.user.directories.vectors);
+                folderPath = await fs.realpath(path.join(vectorsPath, safeSource, safeCollectionId));
             } catch {
-                return res.status(404).json({ error: `Folder not found: ${folderPath}` });
+                return res.status(404).json({ error: 'Folder not found' });
+            }
+            if (!folderPath.startsWith(vectorsPath + path.sep)) {
+                return res.status(400).json({ error: 'Folder is outside the vectors directory' });
             }
 
-            const platform = process.platform;
-            const cmd = platform === 'win32' ? `start "" "${folderPath}"`
-                : platform === 'darwin' ? `open "${folderPath}"`
-                : `xdg-open "${folderPath}"`;
-
-            exec(cmd, { shell: true });
+            const opener = process.platform === 'win32' ? 'explorer'
+                : process.platform === 'darwin' ? 'open'
+                : 'xdg-open';
+            execFile(opener, [folderPath], error => {
+                // explorer exits non-zero even when the window opens.
+                if (error && process.platform !== 'win32') console.error(`[${pluginName}] open-folder failed:`, error.message);
+            });
             res.json({ success: true, path: folderPath });
 
         } catch (error) {
@@ -718,24 +542,9 @@ export async function init(router) {
                     message = 'Vectra is always available (file-based)';
                     break;
 
-                case 'lancedb':
-                    await loadLanceDBBackend();
-                    if (!lancedbBackend.basePath) {
-                        await lancedbBackend.initialize(req.user.directories.vectors);
-                    }
-                    healthy = lancedbBackend.basePath != null;
-                    message = healthy ? 'LanceDB initialized' : 'LanceDB not initialized';
-                    break;
-
                 case 'qdrant':
                     healthy = await qdrantBackend.healthCheck();
                     message = healthy ? 'Qdrant connected' : 'Qdrant not available';
-                    break;
-
-                case 'milvus':
-                    await loadMilvusBackend();
-                    healthy = await milvusBackend.healthCheck();
-                    message = healthy ? 'Milvus connected' : 'Milvus not available';
                     break;
 
                 default:
@@ -765,21 +574,9 @@ export async function init(router) {
                     res.json({ success: true, message: 'Vectra requires no initialization' });
                     break;
 
-                case 'lancedb':
-                    await loadLanceDBBackend();
-                    await lancedbBackend.initialize(req.user.directories.vectors);
-                    res.json({ success: true, message: 'LanceDB initialized' });
-                    break;
-
                 case 'qdrant':
                     await qdrantBackend.initialize(config);
                     res.json({ success: true, message: 'Qdrant initialized' });
-                    break;
-
-                case 'milvus':
-                    await loadMilvusBackend();
-                    await milvusBackend.initialize(config);
-                    res.json({ success: true, message: 'Milvus initialized' });
                     break;
 
                 default:
@@ -813,6 +610,10 @@ export async function init(router) {
  * Get multiple embeddings for texts from specified source
  */
 async function getVectorsForSource(source, texts, model, directories, req) {
+    // Applied here only, so stored text and keyword matching never see the prefix.
+    const prefix = req?.body?.embeddingPrefix;
+    if (typeof prefix === 'string' && prefix) texts = texts.map(text => prefix + text);
+
     // Specialized batch handling
     if (source === 'bananabread') {
         // BananaBread llama.cpp-compatible endpoint
@@ -1049,11 +850,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 return res.status(400).json({ error: 'collectionId is required' });
             }
 
-            // Auto-init LanceDB if needed
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
-            }
-
             const handler = await getBackendHandler(backend);
             const result = await handler.list(collectionId, source, model, req.user.directories, {
                 offset,
@@ -1098,10 +894,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 return res.status(400).json({ error: 'collectionId is required' });
             }
 
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
-            }
-
             const handler = await getBackendHandler(backend);
             const chunk = await handler.get(collectionId, hash, source, model, req.user.directories, filters);
 
@@ -1138,10 +930,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
             }
             if (!items || !Array.isArray(items)) {
                 return res.status(400).json({ error: 'items array is required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             const handler = await getBackendHandler(backend);
@@ -1181,10 +969,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 return res.status(400).json({ error: 'collectionId and text are required' });
             }
 
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
-            }
-
             const handler = await getBackendHandler(backend);
             const result = await handler.updateText(collectionId, hash, text, source, model, req.user.directories, req, filters);
 
@@ -1219,10 +1003,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
 
             if (!collectionId || !metadata) {
                 return res.status(400).json({ error: 'collectionId and metadata are required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             const handler = await getBackendHandler(backend);
@@ -1261,10 +1041,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
             }
             if (!hashes || !Array.isArray(hashes)) {
                 return res.status(400).json({ error: 'hashes array is required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             const handler = await getBackendHandler(backend);
@@ -1308,10 +1084,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
             }
             if (!queryVector && !searchText) {
                 return res.status(400).json({ error: 'queryVector or searchText is required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             // Get query vector if not provided
@@ -1368,8 +1140,8 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 return res.status(400).json({ error: 'queryVector or searchText is required' });
             }
 
-            // Only Qdrant, Milvus support native hybrid query
-            if (backend !== 'qdrant' && backend !== 'milvus') {
+            // Only Qdrant supports native hybrid query
+            if (backend !== 'qdrant') {
                 return res.status(400).json({ error: `Backend ${backend} does not support native hybrid query` });
             }
 
@@ -1379,16 +1151,9 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 vector = await getEmbeddingForSource(source, searchText, model, req.user.directories, req);
             }
 
-            // Extract keywords if not provided
-            let extractedKeywords = keywords;
-            if (!extractedKeywords && searchText) {
-                // Simple keyword extraction: split by spaces, remove short words
-                extractedKeywords = searchText
-                    .toLowerCase()
-                    .split(/\s+/)
-                    .filter(word => word.length > 2)
-                    .slice(0, 10); // Limit to 10 keywords
-            }
+            const searchKeywords = Array.isArray(keywords)
+                ? keywords.filter(keyword => typeof keyword === 'string' && keyword.trim())
+                : extractSearchKeywords(searchText || '');
 
             // Merge hybridOptions with options
             const mergedOptions = {
@@ -1396,59 +1161,30 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
                 ...options
             };
 
-            if (backend === 'qdrant') {
-                const results = await qdrantBackend.hybridQuery(
-                    collectionId,
-                    vector,
-                    extractedKeywords || [],
-                    topK,
-                    mergedOptions,
-                    filters
-                );
+            const results = await qdrantBackend.hybridQuery(
+                collectionId,
+                vector,
+                searchKeywords,
+                topK,
+                mergedOptions,
+                filters
+            );
 
-                res.json({
-                    success: true,
-                    backend: 'qdrant',
-                    collectionId,
-                    count: results.length,
-                    results: results.map(r => ({
-                        hash: r.hash,
-                        text: r.text,
-                        score: r.score,
-                        metadata: r.metadata,
-                        vectorScore: r.debug?.vectorScore,
-                        textScore: r.debug?.keywordScore,
-                        debug: r.debug
-                    }))
-                });
-            } else if (backend === 'milvus') {
-                // Milvus hybrid query implementation (if available)
-                await loadMilvusBackend();
-                const results = await milvusBackend.hybridQuery(
-                    collectionId,
-                    vector,
-                    extractedKeywords || [],
-                    topK,
-                    mergedOptions,
-                    filters
-                );
-
-                res.json({
-                    success: true,
-                    backend: 'milvus',
-                    collectionId,
-                    count: results.length,
-                    results: results.map(r => ({
-                        hash: r.hash,
-                        text: r.text,
-                        score: r.score,
-                        metadata: r.metadata,
-                        vectorScore: r.debug?.vectorScore,
-                        textScore: r.debug?.keywordScore,
-                        debug: r.debug
-                    }))
-                });
-            }
+            res.json({
+                success: true,
+                backend: 'qdrant',
+                collectionId,
+                count: results.length,
+                results: results.map(r => ({
+                    hash: r.hash,
+                    text: r.text,
+                    score: r.score,
+                    metadata: r.metadata,
+                    vectorScore: r.debug?.vectorScore,
+                    textScore: r.debug?.keywordScore,
+                    debug: r.debug
+                }))
+            });
 
         } catch (error) {
             console.error(`[${pluginName}] chunks/hybrid-query error:`, error);
@@ -1473,10 +1209,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
 
             if (!collectionId) {
                 return res.status(400).json({ error: 'collectionId is required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             const handler = await getBackendHandler(backend);
@@ -1584,10 +1316,6 @@ async function _getLegacySingleEmbedding(source, text, model, directories, req) 
 
             if (!collectionId) {
                 return res.status(400).json({ error: 'collectionId is required' });
-            }
-
-            if (backend === 'lancedb') {
-                await ensureLanceDBInitialized(req.user.directories);
             }
 
             const handler = await getBackendHandler(backend);
@@ -1806,49 +1534,6 @@ async function scanAllSourcesForCollections(vectorsPath) {
             });
         }
 
-        // Scan LanceDB
-        const lancedbPath = path.join(vectorsPath, 'lancedb');
-        try {
-            await fs.access(lancedbPath);
-            await loadLanceDBBackend();
-            if (!lancedbBackend.basePath) {
-                await lancedbBackend.initialize(vectorsPath);
-            }
-
-            const sourceDirs = await fs.readdir(lancedbPath, { withFileTypes: true });
-            const sources = sourceDirs.filter(d => d.isDirectory() && !d.name.endsWith('.lance')).map(d => d.name);
-
-            for (const source of sources) {
-                try {
-                    const db = await lancedbBackend.getDatabase(source);
-                    const tableNames = await db.tableNames();
-
-                    for (const tableName of tableNames) {
-                        if (!tableName) continue;
-                        try {
-                            const table = await db.openTable(tableName);
-                            const count = await table.countRows();
-
-                            allCollections.push({
-                                id: tableName,
-                                source: source,
-                                backend: 'lancedb',
-                                chunkCount: count,
-                                modelCount: 1
-                            });
-                        } catch (e) {
-                            console.warn(`[${pluginName}] LanceDB: Failed to open table '${tableName}' in source '${source}':`, e.message);
-                        }
-                    }
-                } catch (e) {
-                    console.warn(`[${pluginName}] LanceDB: Failed to scan source '${source}':`, e.message);
-                }
-            }
-        } catch (e) {
-            // LanceDB folder doesn't exist - this is normal if LanceDB hasn't been used
-            console.debug(`[${pluginName}] LanceDB folder not found or not accessible:`, e.message);
-        }
-
         // Scan Qdrant (uses REST API, so check if initialized via baseUrl)
         try {
             if (qdrantBackend.baseUrl) {
@@ -1887,25 +1572,6 @@ async function scanAllSourcesForCollections(vectorsPath) {
             }
         } catch (e) {
             console.warn(`[${pluginName}] Qdrant: Failed to scan collections:`, e.message);
-        }
-
-        // Scan Milvus
-        try {
-            if (milvusBackend?.isConnected) {
-                const items = await milvusBackend.listItems('vecthare_main', {}, { limit: 1 });
-                if (items.length > 0) {
-                    const stats = await milvusBackend.getCollectionStats('vecthare_main');
-                    allCollections.push({
-                        id: 'vecthare_main',
-                        source: 'milvus',
-                        backend: 'milvus',
-                        chunkCount: stats.chunkCount,
-                        modelCount: 1
-                    });
-                }
-            }
-        } catch (e) {
-            console.warn(`[${pluginName}] Milvus: Failed to scan collections:`, e.message);
         }
 
     } catch (error) {
@@ -1974,6 +1640,8 @@ async function getChunkCountFromIndex(indexPath) {
     }
 }
 
+export { extractSearchKeywords };
+
 export async function exit() {
     console.log(`[${pluginName}] Plugin shutting down...`);
 }
@@ -1981,6 +1649,6 @@ export async function exit() {
 export const info = {
     id: pluginName,
     name: 'Similharity',
-    description: 'Unified vector database backend for VectHare - supports Vectra, LanceDB, and Qdrant',
+    description: 'Unified vector database backend for VectHare - supports Vectra and Qdrant',
     version: pluginVersion
 };

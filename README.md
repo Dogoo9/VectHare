@@ -8,7 +8,6 @@ Server-side plugin for [the VectHare](https://github.com/Conejachibi/VectHare) e
 
 ## Features
 
-- **LanceDB Backend** - Disk-based vector storage with Apache Arrow format
 - **Qdrant Backend** - High-performance vector search with multitenancy support
 - **Enhanced Vectra** - Full metadata storage (bypasses ST's hash/text/index limitation)
 - **Collection Browser** - List all collections across all backends
@@ -47,7 +46,6 @@ SillyTavern/
         ├── .git/          <-- THIS IS IMPORTANT FOR AUTO-UPDATES
         ├── index.js
         ├── package.json
-        ├── lancedb-backend.js
         ├── qdrant-backend.js
         └── README.md
 ```
@@ -124,7 +122,6 @@ Returns plugin status and capabilities.
   "version": "3.2.1",
   "features": [
     "vectra-full-metadata",
-    "lancedb",
     "qdrant",
     "collection-browser",
     "folder-explorer"
@@ -140,26 +137,19 @@ Returns plugin status and capabilities.
 
 #### `GET /collections`
 
-Scans all vector backends (Standard/Vectra, LanceDB, Qdrant) and returns unified collection list.
+Scans all vector backends (Standard/Vectra, Qdrant) and returns unified collection list.
 
 **Response:**
 ```json
 {
   "success": true,
-  "count": 3,
+  "count": 2,
   "collections": [
     {
       "id": "similharity_chat_Alice",
       "source": "transformers",
       "backend": "standard",
       "chunkCount": 150,
-      "modelCount": 1
-    },
-    {
-      "id": "similharity_lore_WorldInfo",
-      "source": "lancedb",
-      "backend": "lancedb",
-      "chunkCount": 500,
       "modelCount": 1
     },
     {
@@ -241,200 +231,6 @@ Opens the collection folder in file explorer (platform-specific).
 ```
 
 **Note:** Qdrant collections have no local folder (remote storage).
-
----
-
-## LanceDB Backend
-
-### Initialize
-
-#### `POST /lancedb/init`
-
-Initializes LanceDB database connection.
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "LanceDB initialized"
-}
-```
-
-### Health Check
-
-#### `GET /lancedb/health`
-
-Checks LanceDB connection health.
-
-**Response:**
-```json
-{
-  "success": true,
-  "healthy": true
-}
-```
-
-### Insert Vectors
-
-#### `POST /lancedb/insert`
-
-Inserts vectors with full metadata into a collection.
-
-**Request:**
-```json
-{
-  "collectionId": "similharity_chat_Alice",
-  "items": [
-    {
-      "hash": "abc123",
-      "text": "We explored the ancient ruins together.",
-      "index": 0,
-      "vector": [0.1, 0.2, 0.3, ...],
-      "name": "Ruins Exploration",
-      "importance": 150,
-      "keywords": ["ruins", "adventure"],
-      "disabled": false
-    }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "inserted": 1
-}
-```
-
-### Query Collection
-
-#### `POST /lancedb/query`
-
-Searches collection for similar vectors.
-
-**Request:**
-```json
-{
-  "collectionId": "similharity_chat_Alice",
-  "queryVector": [0.1, 0.2, 0.3, ...],
-  "topK": 10
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "results": [
-    {
-      "hash": "abc123",
-      "text": "We explored the ancient ruins together.",
-      "score": 0.92,
-      "metadata": {
-        "name": "Ruins Exploration",
-        "importance": 150,
-        "keywords": ["ruins", "adventure"]
-      }
-    }
-  ]
-}
-```
-
-### List Saved Hashes
-
-#### `POST /lancedb/list`
-
-Returns all hashes in collection.
-
-**Request:**
-```json
-{
-  "collectionId": "similharity_chat_Alice"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "hashes": ["abc123", "def456", "ghi789"]
-}
-```
-
-### Delete Vectors
-
-#### `POST /lancedb/delete`
-
-Deletes specific items by hash.
-
-**Request:**
-```json
-{
-  "collectionId": "similharity_chat_Alice",
-  "hashes": ["abc123", "def456"]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "deleted": 2
-}
-```
-
-### Purge Collection
-
-#### `POST /lancedb/purge`
-
-Deletes entire collection.
-
-**Request:**
-```json
-{
-  "collectionId": "similharity_chat_Alice"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Collection similharity_chat_Alice purged"
-}
-```
-
-### Purge All Collections
-
-#### `POST /lancedb/purge-all`
-
-Deletes ALL LanceDB collections. **Use with caution!**
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "All collections purged"
-}
-```
-
-### Get Collection Statistics
-
-#### `GET /lancedb/stats/:collectionId`
-
-Returns statistics for a collection.
-
-**Response:**
-```json
-{
-  "success": true,
-  "stats": {
-    "rowCount": 150,
-    "sizeBytes": 1048576
-  }
-}
-```
 
 ---
 
@@ -808,6 +604,8 @@ Searches and returns results with ALL metadata.
 ---
 
 ## Embedding Utilities
+
+`/chunks/query`, `/chunks/hybrid-query`, `/chunks/insert` and `PATCH /chunks/:hash/text` accept an optional `embeddingPrefix` string. It is added only to text embedded by the server. It is never stored or used for keyword matching.
 
 ### Query with Vectors
 

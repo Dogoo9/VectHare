@@ -60,3 +60,37 @@ test('delete scopes matching hashes to the requested tenant', async () => {
         },
     });
 });
+
+test('a dimension mismatch fails without deleting any collection', async () => {
+    const backend = new QdrantBackend();
+    backend.baseUrl = 'http://qdrant.test';
+    const methods = [];
+    backend._request = async (method, endpoint) => {
+        methods.push(method);
+        if (endpoint === '/collections') return { result: { collections: [{ name: 'lore' }] } };
+        return { result: { config: { params: { vectors: { size: 768 } } } } };
+    };
+
+    await assert.rejects(
+        backend.insertVectors('lore', [{ hash: 1, text: 'hello', vector: [0.1, 0.2] }]),
+        /dimension.*expected dim: 768, got 2/,
+    );
+    assert.equal(methods.includes('DELETE'), false);
+    assert.equal(methods.includes('PUT'), false);
+});
+
+test('hybrid fusion uses the client text weight', async () => {
+    const backend = new QdrantBackend();
+    backend.baseUrl = 'http://qdrant.test';
+    backend._request = async (method, endpoint) => {
+        if (endpoint === '/collections') return { result: { collections: [{ name: 'lore' }] } };
+        const point = { score: 0.5, payload: { hash: 1, text: 'mira' } };
+        if (endpoint.endsWith('/points/search')) return { result: [point] };
+        return { result: { points: [point] } };
+    };
+
+    const [result] = await backend.hybridQuery('lore', [1, 0], ['mira'], 5, {
+        fusionMethod: 'weighted', vectorWeight: 0.7, textWeight: 0.3,
+    });
+    assert.ok(Math.abs(result.score - (0.7 * 0.5 + 0.3)) < 1e-9);
+});
