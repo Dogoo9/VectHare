@@ -730,6 +730,8 @@ function bindSettingsEvents(settings, callbacks) {
     for (const [id, key, fallback] of [
         ['#vecthare_lore_max_tokens', 'lore_max_tokens', 8000],
         ['#vecthare_summary_context_chars', 'summary_context_chars', 1500],
+        ['#vecthare_chat_recall_max_chars', 'chat_recall_max_chars', 8000],
+        ['#vecthare_sticky_delta_max_tokens', 'sticky_delta_max_tokens', 1200],
     ]) {
         $(id)
             .val(settings[key] ?? fallback)

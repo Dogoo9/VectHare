@@ -1900,8 +1900,15 @@ function planInjection(chunks, chat, settings, finalK, activeCollections) {
     return { stable, delta, recall };
 }
 
+// Blocks that change every turn go after the newest message (depth 0). Sliding-window
+// models such as Gemma can only reuse the cache up to llama.cpp's last checkpoint, kept
+// one micro-batch before the end; at depth 1 the next turn always starts before it and
+// the reprocessed span grows every turn. Measured 2026-11-22: depth 1 went 627→1712
+// tokens over four turns, depth 0 stayed flat while the block fit in one micro-batch.
+const PER_TURN_DEPTH = 0;
+
 function injectInChatBlock(tag, text) {
-    setExtensionPrompt(tag, text, extension_prompt_types.IN_CHAT, 1, false);
+    setExtensionPrompt(tag, text, extension_prompt_types.IN_CHAT, PER_TURN_DEPTH, false);
 }
 
 // ============================================================================
@@ -2193,7 +2200,7 @@ export async function rearrangeChat(chat, settings, type) {
         injectInChatBlock(DELTA_PROMPT_TAG, deltaText);
         injectInChatBlock(RECALL_PROMPT_TAG, recallText);
         [...delta, ...recall].forEach(chunk => recordChunkFate(debugData, chunk.hash, 'final', 'injected', null, {
-            score: chunk.score, collectionId: chunk.collectionId, position: extension_prompt_types.IN_CHAT, depth: 1,
+            score: chunk.score, collectionId: chunk.collectionId, position: extension_prompt_types.IN_CHAT, depth: PER_TURN_DEPTH,
         }));
         injection.text = [injection.text, deltaText, recallText].filter(Boolean).join('\n\n---\n\n');
 

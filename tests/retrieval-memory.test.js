@@ -90,7 +90,7 @@ describe('sticky lore', () => {
         context.chat.push({ is_user: false, mes: 'reply two' }, { is_user: true, mes: 'third' });
         await generate();
         expect(prompts['3_vecthare'].value).toBe(first);
-        expect(prompts['3_vecthare_delta']).toMatchObject({ value: 'Lore 3', position: 1, depth: 1 });
+        expect(prompts['3_vecthare_delta']).toMatchObject({ value: 'Lore 3', position: 1, depth: 0 });
 
         context.chat[0].is_system = true;
         await generate();
@@ -136,7 +136,7 @@ describe('chat recall', () => {
         expect(picked.map(c => c.text)).toEqual(['[Recalled from earlier in this chat — message 0]\nold fact']);
     });
 
-    it('queries this chat without metadata and injects recalled text at depth 1 outside the sticky block', async () => {
+    it('queries this chat without metadata and injects recalled text after the newest message, outside the sticky block', async () => {
         context.chat = [ghost('the hidden promise'), { is_user: true, mes: 'remember?' }];
         const chatId = getChatCollectionId();
         queryMultipleCollections.mockImplementation(async ids => {
@@ -145,7 +145,7 @@ describe('chat recall', () => {
         });
         await generate({ ...base, chat_recall_enabled: true });
         expect(prompts['3_vecthare'].value).toBe('Lore 1');
-        expect(prompts['3_vecthare_recall']).toMatchObject({ position: 1, depth: 1 });
+        expect(prompts['3_vecthare_recall']).toMatchObject({ position: 1, depth: 0 });
         expect(prompts['3_vecthare_recall'].value).toContain('the hidden promise');
     });
 

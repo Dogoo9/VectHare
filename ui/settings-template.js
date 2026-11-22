@@ -409,6 +409,14 @@ export function getSettingsHtml() {
                             </label>
                             <small class="vecthare_hint">Indexes this chat and brings back relevant messages hidden by Summaryception</small>
 
+                            <label for="vecthare_chat_recall_max_chars" style="display: block; margin-top: 12px;"><small>Recalled Messages Limit (characters)</small></label>
+                            <input id="vecthare_chat_recall_max_chars" class="text_pole" type="number" min="0" step="200" />
+                            <small class="vecthare_hint">Changes every turn, so it is placed after the newest message. Keep this and new lore together under about 500 tokens (2000 characters) for llama.cpp with -ub 512, or each turn reprocesses more of the prompt.</small>
+
+                            <label for="vecthare_sticky_delta_max_tokens" style="display: block; margin-top: 12px;"><small>New Lore Per Turn Limit (tokens)</small></label>
+                            <input id="vecthare_sticky_delta_max_tokens" class="text_pole" type="number" min="0" step="100" />
+                            <small class="vecthare_hint">Lore found between refreshes, added after the newest message. Newly named characters are always added. 0 turns the limit off.</small>
+
                             <label for="vecthare_lore_max_tokens" style="display: block; margin-top: 12px;"><small>Lore Token Limit</small></label>
                             <input id="vecthare_lore_max_tokens" class="text_pole" type="number" min="0" step="500" />
                             <small class="vecthare_hint">Limits extra lore found by meaning. Entries named in the chat or story memory are always kept. 0 turns the limit off.</small>
