@@ -32,6 +32,7 @@ vi.mock('../core/core-vector-api.js', () => ({
 }));
 
 import { getStringHash } from '../core/../../../../utils.js';
+import { extension_settings } from '../core/../../../../extensions.js';
 import { selectFinalChunks } from '../core/retrieval-budget.js';
 import {
     buildKeywordScanText, buildSearchQueries, getChatCollectionId, markMemoryKeywordMatches, queryAndMergeCollections,
@@ -161,6 +162,26 @@ describe('chat recall', () => {
         await generate({ ...base, chat_recall_enabled: true });
         expect(searched.find(([text]) => text === 'remember?')[1]).toContain(chatId);
         expect(searched.find(([text]) => text === '- a promise was made')[1]).toEqual(['lore']);
+    });
+
+    it('still injects hits from another chat\'s collection while recall is on', async () => {
+        const vecthare = extension_settings.vecthare;
+        const saved = { collections: vecthare.collections, registry: vecthare.vecthare_collection_registry };
+        vecthare.collections = { ...saved.collections, vecthare_chat_other: { alwaysActive: true } };
+        vecthare.vecthare_collection_registry = [...saved.registry, 'vecthare_chat_other'];
+        try {
+            context.chat = [ghost('the hidden promise'), { is_user: true, mes: 'remember?' }];
+            queryMultipleCollections.mockImplementation(async ids => {
+                expect(ids).toContain('vecthare_chat_other');
+                return { ...lore([[1, 0.9]]), vecthare_chat_other: { hashes: [77], metadata: [{ text: 'from another chat', score: 0.8 }] } };
+            });
+            await generate({ ...base, chat_recall_enabled: true });
+            expect(prompts['3_vecthare_delta'].value).toContain('from another chat');
+            expect(prompts['3_vecthare_recall'].value).toBe('');
+        } finally {
+            vecthare.collections = saved.collections;
+            vecthare.vecthare_collection_registry = saved.registry;
+        }
     });
 
     it('syncs hidden Summaryception messages per message, without auto-sync metadata', async () => {

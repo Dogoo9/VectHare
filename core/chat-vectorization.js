@@ -700,6 +700,11 @@ function isCurrentChatCollection(collectionId) {
     return !!chatCollectionId && parseRegistryKey(collectionId).collectionId === chatCollectionId;
 }
 
+/** Hits recall handles: this chat's own messages. Other chats' hits stay ordinary results. */
+function isRecallChunk(chunk) {
+    return isCurrentChatCollection(chunk.collectionId);
+}
+
 function isChatChunk(chunk) {
     return parseCollectionId(parseRegistryKey(chunk.collectionId).collectionId).type === 'chat';
 }
@@ -1886,8 +1891,8 @@ function resolveStickyLore(selected, settings, finalK, activeCollections) {
  */
 function planInjection(chunks, chat, settings, finalK, activeCollections) {
     const recallOn = settings.chat_recall_enabled === true;
-    const recall = recallOn ? selectRecallChunks(chunks.filter(isChatChunk), chat, settings) : [];
-    const selected = selectFinalChunks(recallOn ? chunks.filter(chunk => !isChatChunk(chunk)) : chunks, finalK, { maxTokens: settings.lore_max_tokens });
+    const recall = recallOn ? selectRecallChunks(chunks.filter(isRecallChunk), chat, settings) : [];
+    const selected = selectFinalChunks(recallOn ? chunks.filter(chunk => !isRecallChunk(chunk)) : chunks, finalK, { maxTokens: settings.lore_max_tokens });
     if (settings.sticky_lore === false) return { stable: selected, delta: [], recall };
 
     const lore = selected.filter(chunk => !isChatChunk(chunk));
@@ -2087,7 +2092,7 @@ export async function rearrangeChat(chat, settings, type) {
         // === STAGE 4.3: Boost chunks with matching query keywords ===
         if (chunks.length > 0) {
             // Recalled messages compete on meaning; their generated keywords must not force them in.
-            const promotable = settings.chat_recall_enabled === true ? chunks.filter(chunk => !isChatChunk(chunk)) : chunks;
+            const promotable = settings.chat_recall_enabled === true ? chunks.filter(chunk => !isRecallChunk(chunk)) : chunks;
             const keywordMatchCount = promoteKeywordMatches(promotable, keywordScanText, queryKeywordTexts);
             markMemoryKeywordMatches(promotable, readSummaryKeywordText(settings), settings.score_threshold || 0);
 
