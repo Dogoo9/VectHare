@@ -695,6 +695,11 @@ function withChatRecallCollection(collectionIds, settings) {
     return [...collectionIds, chatCollectionId];
 }
 
+function isCurrentChatCollection(collectionId) {
+    const chatCollectionId = getChatCollectionId();
+    return !!chatCollectionId && parseRegistryKey(collectionId).collectionId === chatCollectionId;
+}
+
 function isChatChunk(chunk) {
     return parseCollectionId(parseRegistryKey(chunk.collectionId).collectionId).type === 'chat';
 }
@@ -798,12 +803,17 @@ export async function queryAndMergeCollections(activeCollections, queryText, set
     }
 
     const backendStart = performance.now();
-    const queries = Array.isArray(queryText) ? queryText : [queryText];
+    // A query is a string searched in every collection, or { text, collections }
+    // searched only in the listed ones.
+    const queries = (Array.isArray(queryText) ? queryText : [queryText])
+        .map(query => typeof query === 'string' ? { text: query, collections: activeCollections } : query)
+        .map(query => ({ ...query, collections: query.collections.filter(id => activeCollections.includes(id)) }))
+        .filter(query => query.collections.length > 0);
     // Threshold locally after keyword promotion. Applying it in the backend
     // would discard low-vector-score keyword hits before they can be promoted
     // to an authoritative 100% match.
     const outcomes = await Promise.allSettled(queries.map(query => queryMultipleCollections(
-        activeCollections, query, candidateKMax, 0, settings,
+        query.collections, query.text, candidateKMax, 0, settings,
     )));
     const resultMaps = outcomes.filter(outcome => outcome.status === 'fulfilled').map(outcome => outcome.value);
     let resultMap;
@@ -1979,7 +1989,9 @@ export async function rearrangeChat(chat, settings, type) {
 
         // === STAGE 2: Build search query ===
         const memoryText = readSummaryMemory(settings);
-        const searchQueries = buildSearchQueries(chat, settings, memoryText);
+        const turnQueries = buildSearchQueries(chat, settings);
+        const searchMemory = !!memoryText && !turnQueries.includes(memoryText);
+        const searchQueries = searchMemory ? [...turnQueries, memoryText] : turnQueries;
         const queryText = searchQueries.join('\n');
         if (searchQueries.length === 0) {
             logger.debug('VectHare: No text to query');
@@ -2056,7 +2068,13 @@ export async function rearrangeChat(chat, settings, type) {
 
         // === STAGE 4: Query all collections and merge results ===
         const backendStarted = performance.now();
-        let chunks = await queryAndMergeCollections(activeCollections, searchQueries, settings, chat, debugData);
+        // The memory summarizes this chat's hidden messages, so searching this chat
+        // with it finds exactly the messages it already covers and recalls them twice.
+        const queryPlan = searchMemory ? [
+            ...turnQueries,
+            { text: memoryText, collections: activeCollections.filter(id => !isCurrentChatCollection(id)) },
+        ] : turnQueries;
+        let chunks = await queryAndMergeCollections(activeCollections, queryPlan, settings, chat, debugData);
         const backendLatencyMs = performance.now() - backendStarted;
         const candidatesRetrieved = chunks.length;
 

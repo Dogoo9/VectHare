@@ -149,6 +149,20 @@ describe('chat recall', () => {
         expect(prompts['3_vecthare_recall'].value).toContain('the hidden promise');
     });
 
+    it('never searches this chat with the memory, which would recall what it already summarizes', async () => {
+        context.chat = [ghost('the hidden promise'), { is_user: true, mes: 'remember?' }];
+        prompts.summaryception = { value: '- a promise was made' };
+        const chatId = getChatCollectionId();
+        const searched = [];
+        queryMultipleCollections.mockImplementation(async (ids, text) => {
+            searched.push([text, [...ids]]);
+            return Object.fromEntries(ids.map(id => [id, { hashes: [], metadata: [] }]));
+        });
+        await generate({ ...base, chat_recall_enabled: true });
+        expect(searched.find(([text]) => text === 'remember?')[1]).toContain(chatId);
+        expect(searched.find(([text]) => text === '- a promise was made')[1]).toEqual(['lore']);
+    });
+
     it('syncs hidden Summaryception messages per message, without auto-sync metadata', async () => {
         context.chat = [ghost('hidden'), { mes: 'user hidden', is_system: true }, { mes: 'shown', is_user: true }, { mes: '   ' }];
         const result = await synchronizeChat({ chat_recall_enabled: true, chunking_strategy: 'message_batch', keyword_extraction_level: 'off', vector_backend: 'standard', source: 'openai' }, 5);
