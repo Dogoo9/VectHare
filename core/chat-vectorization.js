@@ -1840,7 +1840,11 @@ export function selectRecallChunks(chunks, visibleChat, settings, fullChat = get
         if (recalled.length >= limit) break;
         const source = hiddenByHash.get(String(chunk.hash));
         if (!source || used.has(source)) continue;
-        const text = `[Recalled from earlier in this chat — message ${source.index}]\n${substituteParams(source.msg.mes).trim()}`;
+        // Clean as at indexing: the prompt's regex scripts never reach extension prompts.
+        const body = cleanText(String(substituteParams(source.msg.mes))).trim();
+        if (!body) continue;
+        const speaker = source.msg.name ? `, ${source.msg.name}` : '';
+        const text = `[Recalled from earlier in this chat — message ${source.index}${speaker}]\n${body}`;
         if (text.length > remainingChars) continue;
         remainingChars -= text.length;
         used.add(source);

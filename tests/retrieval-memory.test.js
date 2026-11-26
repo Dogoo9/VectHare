@@ -150,6 +150,20 @@ describe('chat recall', () => {
         expect(prompts['3_vecthare_recall'].value).toContain('the hidden promise');
     });
 
+    it('cleans recalled text the way it was indexed and names the speaker', () => {
+        const vecthare = extension_settings.vecthare;
+        const saved = vecthare.cleaning;
+        vecthare.cleaning = { selectedPreset: 'html_formatting', customPatterns: [], enabledBuiltins: [] };
+        try {
+            const msg = { ...ghost('<font color="red">the</font> promise'), name: 'Alice' };
+            context.chat = [msg, { mes: 'visible' }];
+            const picked = selectRecallChunks([{ hash: getStringHash(msg.mes), score: 1 }], [{ mes: 'visible' }], {});
+            expect(picked.map(c => c.text)).toEqual(['[Recalled from earlier in this chat — message 0, Alice]\nthe promise']);
+        } finally {
+            vecthare.cleaning = saved;
+        }
+    });
+
     it('never searches this chat with the memory, which would recall what it already summarizes', async () => {
         context.chat = [ghost('the hidden promise'), { is_user: true, mes: 'remember?' }];
         prompts.summaryception = { value: '- a promise was made' };
